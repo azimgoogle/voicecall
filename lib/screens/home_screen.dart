@@ -21,6 +21,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _webrtc = WebRtcService();
   StreamSubscription? _incomingCallSub;
   bool _inCall = false;
+  bool _isCallerRole = false;
   String? _currentCallId;
 
   @override
@@ -50,6 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
       (callId) async {
         if (_inCall) return;
         _inCall = true;
+        _isCallerRole = false;
         _currentCallId = callId;
         await _answerCall(callId);
         if (mounted) setState(() {});
@@ -63,6 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (remoteId.isEmpty) return;
 
     _inCall = true;
+    _isCallerRole = true;
     setState(() {});
 
     await _webrtc.init();
@@ -130,9 +133,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onCallEnded() async {
+    // Local cleanup only — no Firebase status write.
+    // Caller already wrote "ended"; callee just cleans up.
     await _firebase.cancelListeners();
     await _webrtc.close();
     _inCall = false;
+    _isCallerRole = false;
     _currentCallId = null;
     if (mounted) setState(() {});
   }
@@ -144,6 +150,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await _firebase.cancelListeners();
     await _webrtc.close();
     _inCall = false;
+    _isCallerRole = false;
     _currentCallId = null;
     if (mounted) setState(() {});
   }
@@ -151,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _incomingCallSub?.cancel();
-    if (_currentCallId != null) {
+    if (_isCallerRole && _currentCallId != null) {
       _firebase.setStatus(_currentCallId!, 'ended');
     }
     _firebase.cancelListeners();
@@ -162,7 +169,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     if (_inCall) {
-      return CallScreen(onEndCall: _endCall);
+      return CallScreen(isCaller: _isCallerRole, onEndCall: _endCall);
     }
 
     return Scaffold(
