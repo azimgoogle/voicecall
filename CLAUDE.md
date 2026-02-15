@@ -127,6 +127,7 @@ flutter run              # run on connected Android device/emulator
 
 - **Auto-accept**: No ringing UI. Callee detects `/users/{myId}/incomingCall` via `onValue` listener and immediately answers.
 - **Caller-only end call**: Only the caller sees the "End Call" button. Callee stays in call until the caller hangs up.
+- **One-way audio (callee→caller)**: Callee's mic is ON (sends audio), caller listens. Caller's mic is muted, callee ignores any remote audio. Caller hears callee, not the other way around.
 - **Separated services**: Firebase signaling and WebRTC are independent services. HomeScreen orchestrates them.
 - **No video**: getUserMedia called with `audio: true, video: false`.
 - **No TURN server**: Only STUN (Google's public one). Will fail behind symmetric NATs.

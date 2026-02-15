@@ -11,14 +11,33 @@ class WebRtcService {
   };
 
   /// Create peer connection and acquire audio-only local stream.
-  Future<void> init() async {
+  ///
+  /// One-way audio (callee → caller):
+  ///   - Caller: mic OFF (muted), listens to remote audio from callee
+  ///   - Callee: mic ON (sends audio), ignores remote audio from caller
+  Future<void> init({bool isCaller = false}) async {
     _pc = await createPeerConnection(_rtcConfig);
     _localStream = await navigator.mediaDevices.getUserMedia({
       'audio': true,
       'video': false,
     });
+
+    // Caller: mute mic — caller only listens, never sends audio
+    if (isCaller) {
+      for (final track in _localStream!.getAudioTracks()) {
+        track.enabled = false;
+      }
+    }
+
     for (final track in _localStream!.getAudioTracks()) {
       await _pc!.addTrack(track, _localStream!);
+    }
+
+    // Callee: discard incoming remote audio — callee never hears caller
+    if (!isCaller) {
+      _pc!.onTrack = (event) {
+        // Discard remote tracks — callee doesn't play any audio
+      };
     }
   }
 

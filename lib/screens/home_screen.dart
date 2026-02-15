@@ -68,7 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _isCallerRole = true;
     setState(() {});
 
-    await _webrtc.init();
+    await _webrtc.init(isCaller: true);
     final callId = _firebase.generateCallId(_myUserId, remoteId);
     _currentCallId = callId;
 
@@ -105,7 +105,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// Callee: read offer → create answer → exchange ICE
   Future<void> _answerCall(String callId) async {
-    await _webrtc.init();
+    await _webrtc.init(isCaller: false);
 
     // Send local ICE candidates to Firebase
     _webrtc.onIceCandidate = (candidate) {
