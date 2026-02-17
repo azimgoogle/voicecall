@@ -14,6 +14,7 @@ dependencies:
   flutter_webrtc: ^0.12.9
   shared_preferences: ^2.5.3
   permission_handler: ^11.4.0
+  flutter_foreground_task: ^9.2.0
 
 dev_dependencies:
   flutter_test:

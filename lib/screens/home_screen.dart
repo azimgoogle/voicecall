@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../services/firebase_signaling.dart';
+import '../services/foreground_service.dart';
 import '../services/webrtc_service.dart';
 import 'call_screen.dart';
 
@@ -43,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     await _firebase.setUserOnline(_myUserId);
     _listenForIncomingCalls();
+    await startForegroundService();
   }
 
   void _listenForIncomingCalls() {
@@ -87,6 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
       callee: remoteId,
     );
     await _firebase.notifyRemoteUser(remoteId, callId);
+    await updateForegroundNotification('In call...');
 
     // Listen for answer
     _firebase.listenForAnswer(callId, (answerData) {
@@ -121,6 +124,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final answer = await _webrtc.createAnswer();
     await _firebase.writeAnswer(callId: callId, answer: answer);
     await _firebase.setStatus(callId, 'active');
+    await updateForegroundNotification('In call...');
 
     // Listen for remote ICE candidates (from caller)
     _firebase.listenForIceCandidates(callId, true, (data) {
@@ -140,6 +144,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _inCall = false;
     _isCallerRole = false;
     _currentCallId = null;
+    await updateForegroundNotification('Waiting for calls...');
     if (mounted) setState(() {});
   }
 
@@ -152,6 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _inCall = false;
     _isCallerRole = false;
     _currentCallId = null;
+    await updateForegroundNotification('Waiting for calls...');
     if (mounted) setState(() {});
   }
 

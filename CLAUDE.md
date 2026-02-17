@@ -11,6 +11,7 @@
 - `firebase_core: ^3.12.1` + `firebase_database: ^11.3.4` — Realtime Database signaling
 - `shared_preferences: ^2.5.3` — persist user ID
 - `permission_handler: ^11.4.0` — runtime microphone permission
+- `flutter_foreground_task: ^9.2.0` — Android foreground service to keep process alive in background
 - STUN server: `stun:stun.l.google.com:19302`
 - Package: `com.familycall.children_voice_call`
 - Min SDK: 24
@@ -46,6 +47,18 @@ Modular structure with separated services:
 │  - cancelListeners        │ │  (screens/call_screen.dart)   │
 └───────────────────────────┘ │  - End Call button            │
                               └───────────────────────────────┘
+
+┌───────────────────────────────┐
+│  ForegroundService wrapper    │
+│  (services/                   │
+│   foreground_service.dart)    │
+│                               │
+│  - initForegroundService()    │
+│  - startForegroundService()   │
+│  - updateForegroundNotification│
+│  - stopForegroundService()    │
+│  - _CallTaskHandler (no-op)   │
+└───────────────────────────────┘
 ```
 
 ## Call Flow
@@ -100,6 +113,7 @@ lib/
   main.dart                          ← Entry point: Firebase init + runApp
   services/
     firebase_signaling.dart          ← All Firebase RTDB operations (signaling)
+    foreground_service.dart          ← Foreground service wrapper (keeps process alive)
     webrtc_service.dart              ← RTCPeerConnection lifecycle + audio
   screens/
     home_screen.dart                 ← HomeScreen: orchestrates services, UI
@@ -108,9 +122,9 @@ lib/
 android/app/build.gradle.kts        ← google-services plugin, minSdk=24
 android/settings.gradle.kts         ← google-services classpath
 android/app/src/main/
-  AndroidManifest.xml                ← INTERNET, RECORD_AUDIO, MODIFY_AUDIO_SETTINGS
+  AndroidManifest.xml                ← INTERNET, RECORD_AUDIO, MODIFY_AUDIO_SETTINGS, FOREGROUND_SERVICE, FOREGROUND_SERVICE_MICROPHONE + service declaration
   kotlin/.../MainActivity.kt        ← stock FlutterActivity, untouched
-pubspec.yaml                         ← 5 dependencies total
+pubspec.yaml                         ← 6 dependencies total
 ```
 
 **Not in repo (must be added manually):** `android/app/google-services.json`
@@ -133,8 +147,8 @@ flutter run              # run on connected Android device/emulator
 - **No TURN server**: Only STUN (Google's public one). Will fail behind symmetric NATs.
 - **No cleanup of stale Firebase data**: Old call records persist. No TTL or cloud function to prune.
 - **No error handling**: All `!` force-unwraps, no try/catch around WebRTC or Firebase ops.
-- **No background support**: App must be in foreground to receive calls.
+- **Background support via foreground service**: `flutter_foreground_task` keeps the app process alive when backgrounded. Firebase listeners and WebRTC continue in the main isolate — the TaskHandler is a no-op. Does NOT survive force-close (would need FCM push for that).
 
 ## Intentionally Skipped (do NOT add unless asked)
 
-iOS support, foreground service, CallKit, notifications, wake lock, call timer, mute/speaker toggles, network quality indicator, reconnection logic, dark mode, error retry, sound effects, Bluetooth handling, cellular interruption handling, battery optimization, persistent notification, ringing UI.
+iOS support, CallKit, notifications, call timer, mute/speaker toggles, network quality indicator, reconnection logic, dark mode, error retry, sound effects, Bluetooth handling, cellular interruption handling, battery optimization, ringing UI.
