@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -42,13 +41,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _init() async {
     await Permission.microphone.request();
 
+    // userId is guaranteed to exist — set by OnboardingScreen on first launch
     final prefs = await SharedPreferences.getInstance();
-    var userId = prefs.getString('userId');
-    if (userId == null) {
-      userId = 'user_${Random().nextInt(99999).toString().padLeft(5, '0')}';
-      await prefs.setString('userId', userId);
-    }
-    setState(() => _myUserId = userId!);
+    final userId = prefs.getString('userId')!;
+    setState(() => _myUserId = userId);
 
     await _firebase.setUserOnline(_myUserId);
     _listenForIncomingCalls();

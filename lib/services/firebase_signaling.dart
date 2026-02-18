@@ -102,6 +102,13 @@ class FirebaseSignaling {
     }));
   }
 
+  /// Check if a userId already exists in the database (ever been registered).
+  /// Returns true if the node at /users/{userId} exists, false otherwise.
+  Future<bool> isUserIdTaken(String userId) async {
+    final snap = await _db.child('users/$userId').get();
+    return snap.exists;
+  }
+
   /// Set user online with auto-disconnect.
   Future<void> setUserOnline(String userId) async {
     final ref = _db.child('users/$userId');
