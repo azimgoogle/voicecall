@@ -29,6 +29,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _currentCallId;
   String _selectedTurnServer = 'both';
 
+  static const String _lastRemoteIdKey = 'last_remote_id';
+
   // Call log tracking
   CallLogEntry? _currentLogEntry;
 
@@ -44,7 +46,11 @@ class _HomeScreenState extends State<HomeScreen> {
     // userId is guaranteed to exist — set by OnboardingScreen on first launch
     final prefs = await SharedPreferences.getInstance();
     final userId = prefs.getString('userId')!;
-    setState(() => _myUserId = userId);
+    final lastRemoteId = prefs.getString(_lastRemoteIdKey) ?? '';
+    setState(() {
+      _myUserId = userId;
+      _remoteIdController.text = lastRemoteId;
+    });
 
     await _firebase.setUserOnline(_myUserId);
     _listenForIncomingCalls();
@@ -92,6 +98,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _makeCall() async {
     final remoteId = _remoteIdController.text.trim();
     if (remoteId.isEmpty) return;
+
+    // Persist so it auto-populates next time
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastRemoteIdKey, remoteId);
 
     _inCall = true;
     _isCallerRole = true;
