@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -6,6 +7,13 @@ import 'package:http/http.dart' as http;
 class WebRtcService {
   RTCPeerConnection? _pc;
   MediaStream? _localStream;
+  Timer? _statsTimer;
+  final _statsController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
+  /// Stream of live stats: `{bytesSent: int, bytesReceived: int}`.
+  /// Emits every second while the call is active.
+  Stream<Map<String, dynamic>> get statsStream => _statsController.stream;
 
   static const String _meteredApiKey = '21601028951dce7b0c1a015657dd0a3ce67d';
   static const String _meteredApiUrl =
@@ -111,6 +119,31 @@ class WebRtcService {
         // Discard remote tracks — callee doesn't play any audio
       };
     }
+
+    _startStatsPolling();
+  }
+
+  void _startStatsPolling() {
+    _statsTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (_pc == null) return;
+      final reports = await _pc!.getStats();
+      int bytesSent = 0;
+      int bytesReceived = 0;
+      for (final report in reports) {
+        final values = report.values;
+        if (report.type == 'outbound-rtp') {
+          bytesSent += (values['bytesSent'] as num?)?.toInt() ?? 0;
+        } else if (report.type == 'inbound-rtp') {
+          bytesReceived += (values['bytesReceived'] as num?)?.toInt() ?? 0;
+        }
+      }
+      if (!_statsController.isClosed) {
+        _statsController.add({
+          'bytesSent': bytesSent,
+          'bytesReceived': bytesReceived,
+        });
+      }
+    });
   }
 
   /// Create SDP offer.
@@ -146,6 +179,8 @@ class WebRtcService {
 
   /// Close peer connection and release media resources.
   Future<void> close() async {
+    _statsTimer?.cancel();
+    _statsTimer = null;
     _localStream?.getTracks().forEach((t) => t.stop());
     _localStream?.dispose();
     _localStream = null;

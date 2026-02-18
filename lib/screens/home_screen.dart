@@ -176,7 +176,11 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     if (_inCall) {
-      return CallScreen(isCaller: _isCallerRole, onEndCall: _endCall);
+      return CallScreen(
+        isCaller: _isCallerRole,
+        onEndCall: _endCall,
+        statsStream: _webrtc.statsStream,
+      );
     }
 
     return Scaffold(
