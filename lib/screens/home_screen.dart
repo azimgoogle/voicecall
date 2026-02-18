@@ -24,7 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _inCall = false;
   bool _isCallerRole = false;
   String? _currentCallId;
-  String _selectedTurnServer = 'metered';
+  String _selectedTurnServer = 'both';
 
   @override
   void initState() {
@@ -209,6 +209,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   value: 'metered',
                   label: Text('Metered'),
                   icon: Icon(Icons.cloud),
+                ),
+                ButtonSegment(
+                  value: 'both',
+                  label: Text('Both'),
+                  icon: Icon(Icons.merge_type),
                 ),
                 ButtonSegment(
                   value: 'expressturn',
