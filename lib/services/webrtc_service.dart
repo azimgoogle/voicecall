@@ -1,14 +1,43 @@
+import 'dart:convert';
+
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:http/http.dart' as http;
 
 class WebRtcService {
   RTCPeerConnection? _pc;
   MediaStream? _localStream;
 
-  final Map<String, dynamic> _rtcConfig = {
-    'iceServers': [
-      {'urls': 'stun:stun.l.google.com:19302'}
-    ]
-  };
+  static const String _meteredApiKey = '21601028951dce7b0c1a015657dd0a3ce67d';
+  static const String _meteredApiUrl =
+      'https://voicecallpoc.metered.live/api/v1/turn/credentials?apiKey=$_meteredApiKey';
+
+  /// Fetch short-lived TURN credentials from Metered.ca API.
+  /// Falls back to Google STUN-only if the request fails (better than nothing).
+  Future<List<Map<String, dynamic>>> _fetchIceServers() async {
+    try {
+      final response = await http
+          .get(Uri.parse(_meteredApiUrl))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.cast<Map<String, dynamic>>();
+      }
+    } catch (_) {
+      // Network error or timeout — fall through to fallback
+    }
+
+    // Fallback: multiple Google STUN servers (same-network calls will still work)
+    return [
+      {
+        'urls': [
+          'stun:stun.l.google.com:19302',
+          'stun:stun1.l.google.com:19302',
+          'stun:stun2.l.google.com:19302',
+        ]
+      }
+    ];
+  }
 
   /// Create peer connection and acquire audio-only local stream.
   ///
@@ -16,7 +45,14 @@ class WebRtcService {
   ///   - Caller: mic OFF (muted), listens to remote audio from callee
   ///   - Callee: mic ON (sends audio), ignores remote audio from caller
   Future<void> init({bool isCaller = false}) async {
-    _pc = await createPeerConnection(_rtcConfig);
+    final iceServers = await _fetchIceServers();
+
+    final rtcConfig = {
+      'iceServers': iceServers,
+      'iceTransportPolicy': 'all', // use direct/STUN when possible, TURN as fallback
+    };
+
+    _pc = await createPeerConnection(rtcConfig);
     _localStream = await navigator.mediaDevices.getUserMedia({
       'audio': true,
       'video': false,
