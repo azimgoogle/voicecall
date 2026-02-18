@@ -83,8 +83,33 @@ class _CallLogsScreenState extends State<CallLogsScreen> {
         return 'ExpressTURN';
       case 'both':
         return 'Both';
+      case 'direct':
+        return 'Direct';
+      case 'stun':
+        return 'STUN';
+      case 'turn':
+        return 'TURN';
+      case 'unknown':
+        return 'Unknown';
       default:
         return turnServer;
+    }
+  }
+
+  /// Icon + colour for the actual connection type used.
+  ({IconData icon, Color color}) _turnUsedStyle(String turnUsed) {
+    switch (turnUsed) {
+      case 'direct':
+        return (icon: Icons.bolt, color: Colors.green);
+      case 'stun':
+        return (icon: Icons.wifi_tethering, color: Colors.blue);
+      case 'metered':
+      case 'expressturn':
+      case 'turn':
+        return (icon: Icons.swap_horiz, color: Colors.orange);
+      case 'unknown':
+      default:
+        return (icon: Icons.help_outline, color: Colors.grey);
     }
   }
 
@@ -123,14 +148,14 @@ class _CallLogsScreenState extends State<CallLogsScreen> {
                     padding: const EdgeInsets.all(12),
                     itemCount: _logs.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, index) =>
-                        _LogCard(
-                          entry: _logs[index],
-                          formatBytes: _formatBytes,
-                          formatDuration: _formatDuration,
-                          formatDateTime: _formatDateTime,
-                          turnLabel: _turnLabel,
-                        ),
+                    itemBuilder: (context, index) => _LogCard(
+                      entry: _logs[index],
+                      formatBytes: _formatBytes,
+                      formatDuration: _formatDuration,
+                      formatDateTime: _formatDateTime,
+                      turnLabel: _turnLabel,
+                      turnUsedStyle: _turnUsedStyle,
+                    ),
                   ),
                 ),
     );
@@ -143,6 +168,7 @@ class _LogCard extends StatelessWidget {
   final String Function(Duration) formatDuration;
   final String Function(DateTime) formatDateTime;
   final String Function(String) turnLabel;
+  final ({IconData icon, Color color}) Function(String) turnUsedStyle;
 
   const _LogCard({
     required this.entry,
@@ -150,6 +176,7 @@ class _LogCard extends StatelessWidget {
     required this.formatDuration,
     required this.formatDateTime,
     required this.turnLabel,
+    required this.turnUsedStyle,
   });
 
   @override
@@ -226,8 +253,7 @@ class _LogCard extends StatelessWidget {
                         fontSize: 13, fontWeight: FontWeight.w500)),
                 const SizedBox(width: 4),
                 const Text('sent',
-                    style:
-                        TextStyle(fontSize: 12, color: Colors.grey)),
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
                 const SizedBox(width: 16),
 
                 // Received
@@ -239,29 +265,77 @@ class _LogCard extends StatelessWidget {
                         fontSize: 13, fontWeight: FontWeight.w500)),
                 const SizedBox(width: 4),
                 const Text('received',
-                    style:
-                        TextStyle(fontSize: 12, color: Colors.grey)),
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
+            const SizedBox(height: 8),
 
-                const Spacer(),
-
-                // TURN badge
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    turnLabel(entry.turnServer),
-                    style: const TextStyle(
-                        fontSize: 11, color: Colors.black54),
-                  ),
+            // TURN row: selected config + actual connection used
+            Row(
+              children: [
+                // Selected TURN config
+                const Text('Config:',
+                    style: TextStyle(fontSize: 11, color: Colors.grey)),
+                const SizedBox(width: 4),
+                _Badge(
+                  label: turnLabel(entry.turnServer),
+                  color: Colors.grey.shade200,
+                  textColor: Colors.black54,
                 ),
+                const SizedBox(width: 10),
+                const Text('Used:',
+                    style: TextStyle(fontSize: 11, color: Colors.grey)),
+                const SizedBox(width: 4),
+                Builder(builder: (_) {
+                  final style = turnUsedStyle(entry.turnUsed);
+                  final label = turnLabel(entry.turnUsed);
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(style.icon, size: 13, color: style.color),
+                      const SizedBox(width: 3),
+                      _Badge(
+                        label: label,
+                        color: style.color.withValues(alpha: 0.12),
+                        textColor: style.color,
+                      ),
+                    ],
+                  );
+                }),
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _Badge extends StatelessWidget {
+  final String label;
+  final Color color;
+  final Color textColor;
+
+  const _Badge({
+    required this.label,
+    required this.color,
+    required this.textColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+            fontSize: 11,
+            color: textColor,
+            fontWeight: FontWeight.w500),
       ),
     );
   }

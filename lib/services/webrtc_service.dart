@@ -177,6 +177,65 @@ class WebRtcService {
     _pc!.onIceCandidate = callback;
   }
 
+  /// Inspect the active ICE candidate pair to determine what relay was actually
+  /// used for this call. Returns one of:
+  ///   'direct'      — host-to-host, no server involved
+  ///   'stun'        — server-reflexive (STUN helped, no relay)
+  ///   'metered'     — relayed via Metered TURN (*.metered.live / openrelay)
+  ///   'expressturn' — relayed via ExpressTURN (*.expressturn.com)
+  ///   'turn'        — relayed via an unrecognised TURN server
+  ///   'unknown'     — stats not available or no active pair found
+  Future<String> resolveActualTurnUsed() async {
+    if (_pc == null) return 'unknown';
+    try {
+      final reports = await _pc!.getStats();
+
+      // Find the succeeded candidate-pair
+      String? localCandidateId;
+      for (final r in reports) {
+        if (r.type == 'candidate-pair') {
+          final state = r.values['state'] as String? ?? '';
+          final nominated = r.values['nominated'] as bool? ?? false;
+          if (state == 'succeeded' || nominated) {
+            localCandidateId =
+                r.values['localCandidateId'] as String?;
+            break;
+          }
+        }
+      }
+
+      if (localCandidateId == null) return 'unknown';
+
+      // Look up the local candidate for that pair
+      for (final r in reports) {
+        if (r.type == 'local-candidate' && r.id == localCandidateId) {
+          final candidateType = r.values['candidateType'] as String? ?? '';
+          if (candidateType != 'relay') {
+            return candidateType == 'host' ? 'direct' : 'stun';
+          }
+          // It's a relay — figure out which TURN server
+          final ip = (r.values['ip'] ??
+                  r.values['address'] ??
+                  r.values['relatedAddress'] ??
+                  '') as String;
+          final url = r.values['url'] as String? ?? '';
+          final combined = '$ip $url'.toLowerCase();
+          if (combined.contains('metered') ||
+              combined.contains('openrelay')) {
+            return 'metered';
+          }
+          if (combined.contains('expressturn')) {
+            return 'expressturn';
+          }
+          return 'turn'; // relay via an unrecognised server
+        }
+      }
+    } catch (_) {
+      // getStats() failed — not critical
+    }
+    return 'unknown';
+  }
+
   /// Close peer connection and release media resources.
   Future<void> close() async {
     _statsTimer?.cancel();

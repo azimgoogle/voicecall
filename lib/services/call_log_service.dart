@@ -11,7 +11,8 @@ class CallLogEntry {
   final String callId;
   final String role; // 'caller' | 'callee'
   final String remoteUserId;
-  final String turnServer; // 'metered' | 'expressturn' | 'both'
+  final String turnServer; // 'metered' | 'expressturn' | 'both' — selected by caller
+  final String turnUsed;   // actual relay used: 'metered' | 'expressturn' | 'direct' | 'stun' | 'unknown'
   final DateTime startedAt;
   final DateTime? endedAt;
   final int bytesSent;
@@ -22,6 +23,7 @@ class CallLogEntry {
     required this.role,
     required this.remoteUserId,
     required this.turnServer,
+    this.turnUsed = 'unknown',
     required this.startedAt,
     this.endedAt,
     this.bytesSent = 0,
@@ -38,6 +40,7 @@ class CallLogEntry {
         'role': role,
         'remoteUserId': remoteUserId,
         'turnServer': turnServer,
+        'turnUsed': turnUsed,
         'startedAt': startedAt.toIso8601String(),
         'endedAt': endedAt?.toIso8601String(),
         'bytesSent': bytesSent,
@@ -49,6 +52,7 @@ class CallLogEntry {
         role: json['role'] as String,
         remoteUserId: json['remoteUserId'] as String,
         turnServer: json['turnServer'] as String? ?? 'both',
+        turnUsed: json['turnUsed'] as String? ?? 'unknown',
         startedAt: DateTime.parse(json['startedAt'] as String),
         endedAt: json['endedAt'] != null
             ? DateTime.parse(json['endedAt'] as String)
@@ -62,12 +66,14 @@ class CallLogEntry {
     DateTime? endedAt,
     int? bytesSent,
     int? bytesReceived,
+    String? turnUsed,
   }) =>
       CallLogEntry(
         callId: callId,
         role: role,
         remoteUserId: remoteUserId,
         turnServer: turnServer,
+        turnUsed: turnUsed ?? this.turnUsed,
         startedAt: startedAt,
         endedAt: endedAt ?? this.endedAt,
         bytesSent: bytesSent ?? this.bytesSent,

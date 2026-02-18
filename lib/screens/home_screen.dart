@@ -85,8 +85,10 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Finalise and persist the current log entry.
   Future<void> _finaliseLog() async {
     if (_currentLogEntry == null) return;
+    final turnUsed = await _webrtc.resolveActualTurnUsed();
     final finalEntry = _currentLogEntry!.copyWith(
       endedAt: DateTime.now(),
+      turnUsed: turnUsed,
     );
     await _logService.saveEntry(finalEntry);
     _currentLogEntry = null;
