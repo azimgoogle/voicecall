@@ -20,22 +20,31 @@ class WebRtcService {
     },
   ];
 
-  /// Fetch short-lived TURN credentials from Metered.ca API, then merge with
-  /// ExpressTURN static credentials so both relay providers are available.
-  /// Falls back to ExpressTURN + Google STUN if the Metered request fails.
-  Future<List<Map<String, dynamic>>> _fetchIceServers() async {
-    // Always include Google STUN + ExpressTURN as the base
-    final base = <Map<String, dynamic>>[
-      {
-        'urls': [
-          'stun:stun.l.google.com:19302',
-          'stun:stun1.l.google.com:19302',
-          'stun:stun2.l.google.com:19302',
-        ]
-      },
-      ..._expressTurnServers,
-    ];
+  static const List<Map<String, dynamic>> _stunServers = [
+    {
+      'urls': [
+        'stun:stun.l.google.com:19302',
+        'stun:stun1.l.google.com:19302',
+        'stun:stun2.l.google.com:19302',
+      ]
+    },
+  ];
 
+  /// Fetch ICE servers based on the selected TURN provider.
+  ///
+  /// [turnServer] options:
+  ///   - 'metered'     → Metered.ca only (dynamic credentials fetched via API)
+  ///   - 'expressturn' → ExpressTURN only (static credentials, no HTTP fetch)
+  ///   - 'both'        → Metered + ExpressTURN merged (used by callee)
+  Future<List<Map<String, dynamic>>> _fetchIceServers({
+    String turnServer = 'both',
+  }) async {
+    if (turnServer == 'expressturn') {
+      // Static credentials — no network call needed
+      return [..._stunServers, ..._expressTurnServers];
+    }
+
+    // For 'metered' or 'both', fetch dynamic Metered credentials
     try {
       final response = await http
           .get(Uri.parse(_meteredApiUrl))
@@ -44,15 +53,24 @@ class WebRtcService {
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         final meteredServers = data.cast<Map<String, dynamic>>();
-        // Merge: Metered (dynamic) + ExpressTURN (static) + STUN
-        // WebRTC will use whichever candidate succeeds first
-        return [..._expressTurnServers, ...meteredServers];
+
+        if (turnServer == 'metered') {
+          return meteredServers; // Metered only (includes their STUN entries)
+        }
+        // 'both': merge Metered + ExpressTURN
+        return [...meteredServers, ..._expressTurnServers];
       }
     } catch (_) {
-      // Network error or timeout — fall through to base fallback
+      // Network error or timeout — fall through to fallback
     }
 
-    return base;
+    // Fallback when Metered fetch fails
+    if (turnServer == 'metered') {
+      // Nothing we can do without credentials — STUN only
+      return _stunServers;
+    }
+    // 'both' fallback: at least use ExpressTURN + STUN
+    return [..._stunServers, ..._expressTurnServers];
   }
 
   /// Create peer connection and acquire audio-only local stream.
@@ -60,12 +78,14 @@ class WebRtcService {
   /// One-way audio (callee → caller):
   ///   - Caller: mic OFF (muted), listens to remote audio from callee
   ///   - Callee: mic ON (sends audio), ignores remote audio from caller
-  Future<void> init({bool isCaller = false}) async {
-    final iceServers = await _fetchIceServers();
+  ///
+  /// [turnServer]: 'metered' | 'expressturn' | 'both'
+  Future<void> init({bool isCaller = false, String turnServer = 'both'}) async {
+    final iceServers = await _fetchIceServers(turnServer: turnServer);
 
     final rtcConfig = {
       'iceServers': iceServers,
-      'iceTransportPolicy': 'all', // use direct/STUN when possible, TURN as fallback
+      'iceTransportPolicy': 'all',
     };
 
     _pc = await createPeerConnection(rtcConfig);

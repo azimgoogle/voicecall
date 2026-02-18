@@ -24,6 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _inCall = false;
   bool _isCallerRole = false;
   String? _currentCallId;
+  String _selectedTurnServer = 'metered';
 
   @override
   void initState() {
@@ -70,7 +71,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _isCallerRole = true;
     setState(() {});
 
-    await _webrtc.init(isCaller: true);
+    await _webrtc.init(isCaller: true, turnServer: _selectedTurnServer);
     final callId = _firebase.generateCallId(_myUserId, remoteId);
     _currentCallId = callId;
 
@@ -194,6 +195,27 @@ class _HomeScreenState extends State<HomeScreen> {
                 labelText: 'Remote User ID',
                 border: OutlineInputBorder(),
               ),
+            ),
+            const SizedBox(height: 24),
+            const Text('TURN Server', style: TextStyle(fontSize: 14, color: Colors.grey)),
+            const SizedBox(height: 8),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(
+                  value: 'metered',
+                  label: Text('Metered'),
+                  icon: Icon(Icons.cloud),
+                ),
+                ButtonSegment(
+                  value: 'expressturn',
+                  label: Text('ExpressTURN'),
+                  icon: Icon(Icons.swap_horiz),
+                ),
+              ],
+              selected: {_selectedTurnServer},
+              onSelectionChanged: (selection) {
+                setState(() => _selectedTurnServer = selection.first);
+              },
             ),
             const SizedBox(height: 16),
             SizedBox(
