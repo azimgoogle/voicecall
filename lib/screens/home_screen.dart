@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../services/call_log_service.dart';
 import '../services/firebase_signaling.dart';
 import '../services/foreground_service.dart';
 import '../services/webrtc_service.dart';
+import 'call_logs_screen.dart';
 import 'call_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -20,11 +22,16 @@ class _HomeScreenState extends State<HomeScreen> {
   final _remoteIdController = TextEditingController();
   final _firebase = FirebaseSignaling();
   final _webrtc = WebRtcService();
+  final _logService = CallLogService();
   StreamSubscription? _incomingCallSub;
+  StreamSubscription? _statsSub;
   bool _inCall = false;
   bool _isCallerRole = false;
   String? _currentCallId;
   String _selectedTurnServer = 'both';
+
+  // Call log tracking
+  CallLogEntry? _currentLogEntry;
 
   @override
   void initState() {
@@ -62,6 +69,29 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Start tracking stats into the current log entry (caller only).
+  void _startStatsTracking() {
+    _statsSub = _webrtc.statsStream.listen((stats) {
+      if (_currentLogEntry == null) return;
+      _currentLogEntry = _currentLogEntry!.copyWith(
+        bytesSent: stats['bytesSent'] as int? ?? 0,
+        bytesReceived: stats['bytesReceived'] as int? ?? 0,
+      );
+    });
+  }
+
+  /// Finalise and persist the current log entry.
+  Future<void> _finaliseLog() async {
+    if (_currentLogEntry == null) return;
+    final finalEntry = _currentLogEntry!.copyWith(
+      endedAt: DateTime.now(),
+    );
+    await _logService.saveEntry(finalEntry);
+    _currentLogEntry = null;
+    _statsSub?.cancel();
+    _statsSub = null;
+  }
+
   /// Caller: create offer → Firebase → listen for answer + ICE
   Future<void> _makeCall() async {
     final remoteId = _remoteIdController.text.trim();
@@ -74,6 +104,17 @@ class _HomeScreenState extends State<HomeScreen> {
     await _webrtc.init(isCaller: true, turnServer: _selectedTurnServer);
     final callId = _firebase.generateCallId(_myUserId, remoteId);
     _currentCallId = callId;
+
+    // Start a log entry for this outgoing call
+    _currentLogEntry = CallLogEntry(
+      callId: callId,
+      role: 'caller',
+      remoteUserId: remoteId,
+      turnServer: _selectedTurnServer,
+      startedAt: DateTime.now(),
+    );
+    await _logService.saveEntry(_currentLogEntry!);
+    _startStatsTracking();
 
     // Send local ICE candidates to Firebase
     _webrtc.onIceCandidate = (candidate) {
@@ -111,6 +152,20 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _answerCall(String callId) async {
     await _webrtc.init(isCaller: false);
 
+    // Derive remote user ID from callId format: {callerId}_{calleeId}_{ts}
+    final parts = callId.split('_');
+    final remoteUserId = parts.length >= 2 ? parts[0] : callId;
+
+    // Start a log entry for this incoming call (callee — no TURN selection)
+    _currentLogEntry = CallLogEntry(
+      callId: callId,
+      role: 'callee',
+      remoteUserId: remoteUserId,
+      turnServer: 'both',
+      startedAt: DateTime.now(),
+    );
+    await _logService.saveEntry(_currentLogEntry!);
+
     // Send local ICE candidates to Firebase
     _webrtc.onIceCandidate = (candidate) {
       _firebase.writeIceCandidate(
@@ -138,6 +193,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onCallEnded() async {
+    await _finaliseLog();
     // Local cleanup only — no Firebase status write.
     // Caller already wrote "ended"; callee just cleans up.
     await _firebase.cancelListeners();
@@ -150,6 +206,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _endCall() async {
+    await _finaliseLog();
     if (_currentCallId != null) {
       await _firebase.setStatus(_currentCallId!, 'ended');
     }
@@ -165,6 +222,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _incomingCallSub?.cancel();
+    _statsSub?.cancel();
     if (_isCallerRole && _currentCallId != null) {
       _firebase.setStatus(_currentCallId!, 'ended');
     }
@@ -184,7 +242,20 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Voice Call POC')),
+      appBar: AppBar(
+        title: const Text('Voice Call POC'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'Call Logs',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => const CallLogsScreen()),
+            ),
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -201,7 +272,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            const Text('TURN Server', style: TextStyle(fontSize: 14, color: Colors.grey)),
+            const Text('TURN Server',
+                style: TextStyle(fontSize: 14, color: Colors.grey)),
             const SizedBox(height: 8),
             SegmentedButton<String>(
               segments: const [
