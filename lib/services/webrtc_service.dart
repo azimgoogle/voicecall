@@ -11,9 +11,31 @@ class WebRtcService {
   static const String _meteredApiUrl =
       'https://voicecallpoc.metered.live/api/v1/turn/credentials?apiKey=$_meteredApiKey';
 
-  /// Fetch short-lived TURN credentials from Metered.ca API.
-  /// Falls back to Google STUN-only if the request fails (better than nothing).
+  /// ExpressTURN static credentials (free tier — refreshed manually from dashboard).
+  static const List<Map<String, dynamic>> _expressTurnServers = [
+    {
+      'urls': 'turn:free.expressturn.com:3478',
+      'username': 'efPU52K4SLOQ34W2QY',
+      'credential': '1TJPNFxHKXrZfelz',
+    },
+  ];
+
+  /// Fetch short-lived TURN credentials from Metered.ca API, then merge with
+  /// ExpressTURN static credentials so both relay providers are available.
+  /// Falls back to ExpressTURN + Google STUN if the Metered request fails.
   Future<List<Map<String, dynamic>>> _fetchIceServers() async {
+    // Always include Google STUN + ExpressTURN as the base
+    final base = <Map<String, dynamic>>[
+      {
+        'urls': [
+          'stun:stun.l.google.com:19302',
+          'stun:stun1.l.google.com:19302',
+          'stun:stun2.l.google.com:19302',
+        ]
+      },
+      ..._expressTurnServers,
+    ];
+
     try {
       final response = await http
           .get(Uri.parse(_meteredApiUrl))
@@ -21,22 +43,16 @@ class WebRtcService {
 
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
-        return data.cast<Map<String, dynamic>>();
+        final meteredServers = data.cast<Map<String, dynamic>>();
+        // Merge: Metered (dynamic) + ExpressTURN (static) + STUN
+        // WebRTC will use whichever candidate succeeds first
+        return [..._expressTurnServers, ...meteredServers];
       }
     } catch (_) {
-      // Network error or timeout — fall through to fallback
+      // Network error or timeout — fall through to base fallback
     }
 
-    // Fallback: multiple Google STUN servers (same-network calls will still work)
-    return [
-      {
-        'urls': [
-          'stun:stun.l.google.com:19302',
-          'stun:stun1.l.google.com:19302',
-          'stun:stun2.l.google.com:19302',
-        ]
-      }
-    ];
+    return base;
   }
 
   /// Create peer connection and acquire audio-only local stream.
