@@ -269,6 +269,9 @@ class _HomeScreenState extends State<HomeScreen> {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setDouble(_callVolumeKey, v);
         },
+        // Mute applies 0.0 / restores _callVolume — never persists 0.0
+        onMuteToggled: (muted) =>
+            _webrtc.setRemoteVolume(muted ? 0.0 : _callVolume),
       );
     }
 

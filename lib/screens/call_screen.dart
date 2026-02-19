@@ -14,6 +14,12 @@ class CallScreen extends StatefulWidget {
   /// Receives the new level (0.0–1.0). Only fired when [isCaller] is true.
   final void Function(double)? onVolumeChanged;
 
+  /// Called when the mute button is toggled.
+  /// [muted] is true when muting, false when unmuting.
+  /// Separate from [onVolumeChanged] so the caller's saved level is never
+  /// overwritten with 0.0 during a mute.
+  final void Function(bool muted)? onMuteToggled;
+
   const CallScreen({
     super.key,
     required this.isCaller,
@@ -21,6 +27,7 @@ class CallScreen extends StatefulWidget {
     this.statsStream,
     this.initialVolume = 1.0,
     this.onVolumeChanged,
+    this.onMuteToggled,
   });
 
   @override
@@ -32,6 +39,7 @@ class _CallScreenState extends State<CallScreen> {
   int _bytesReceived = 0;
   StreamSubscription<Map<String, dynamic>>? _statsSub;
   late double _volume;
+  bool _muted = false;
 
   @override
   void initState() {
@@ -139,16 +147,31 @@ class _CallScreenState extends State<CallScreen> {
                             min: 0.0,
                             max: 1.0,
                             divisions: 10,
-                            label:
-                                '${(_volume * 100).round()}%',
-                            onChanged: (v) {
-                              setState(() => _volume = v);
-                              widget.onVolumeChanged?.call(v);
-                            },
+                            label: '${(_volume * 100).round()}%',
+                            // null disables the slider and greys it out
+                            onChanged: _muted
+                                ? null
+                                : (v) {
+                                    setState(() => _volume = v);
+                                    widget.onVolumeChanged?.call(v);
+                                  },
                           ),
                         ),
-                        const Icon(Icons.volume_up,
-                            size: 20, color: Colors.grey),
+                        IconButton(
+                          icon: Icon(
+                            _muted ? Icons.volume_off : Icons.volume_up,
+                            size: 20,
+                            color: _muted ? Colors.red : Colors.grey,
+                          ),
+                          tooltip: _muted ? 'Unmute' : 'Mute',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () {
+                            final nowMuted = !_muted;
+                            setState(() => _muted = nowMuted);
+                            widget.onMuteToggled?.call(nowMuted);
+                          },
+                        ),
                       ],
                     ),
                   ],
