@@ -4,8 +4,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.PowerManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -17,10 +22,26 @@ class MainActivity : FlutterActivity() {
     private var headsetReceiver: BroadcastReceiver? = null
     private var audioFocusRequest: AudioFocusRequest? = null
 
+    private lateinit var powerManager: PowerManager
+    private lateinit var sensorManager: SensorManager
+    private var proximitySensor: Sensor? = null
+    private var proximityWakeLock: PowerManager.WakeLock? = null
+    private val proximityListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            val near = event.values[0] < (proximitySensor?.maximumRange ?: 5f)
+            // Route to earpiece when near (phone at ear), speaker when far
+            audioManager.isSpeakerphoneOn = !near
+        }
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
@@ -43,6 +64,32 @@ class MainActivity : FlutterActivity() {
                         audioFocusRequest = null
                         audioManager.isSpeakerphoneOn = false
                         audioManager.mode = AudioManager.MODE_NORMAL
+                        result.success(null)
+                    }
+                    "acquireProximityWakeLock" -> {
+                        val sensor = proximitySensor
+                        if (sensor != null) {
+                            sensorManager.registerListener(
+                                proximityListener, sensor,
+                                SensorManager.SENSOR_DELAY_NORMAL
+                            )
+                        }
+                        @Suppress("DEPRECATION")
+                        val wl = powerManager.newWakeLock(
+                            PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+                            "VoiceCall::Proximity"
+                        )
+                        wl.acquire(10 * 60 * 1000L) // 10 min max
+                        proximityWakeLock = wl
+                        result.success(null)
+                    }
+                    "releaseProximityWakeLock" -> {
+                        sensorManager.unregisterListener(proximityListener)
+                        val wl = proximityWakeLock
+                        if (wl != null && wl.isHeld) wl.release()
+                        proximityWakeLock = null
+                        // Restore speaker after proximity is released
+                        audioManager.isSpeakerphoneOn = !isWiredHeadsetOn()
                         result.success(null)
                     }
                     else -> result.notImplemented()

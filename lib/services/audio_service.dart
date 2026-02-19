@@ -15,4 +15,16 @@ class AudioService {
   static Future<void> stopAudioSession() async {
     await _channel.invokeMethod('stopAudioSession');
   }
+
+  /// Acquire PROXIMITY_SCREEN_OFF_WAKE_LOCK so the screen turns off
+  /// when the phone is held to the ear. Also registers a proximity
+  /// sensor listener to route audio to earpiece when near / speaker when far.
+  static Future<void> acquireProximityWakeLock() async {
+    await _channel.invokeMethod('acquireProximityWakeLock');
+  }
+
+  /// Release the proximity wake lock and restore audio routing.
+  static Future<void> releaseProximityWakeLock() async {
+    await _channel.invokeMethod('releaseProximityWakeLock');
+  }
 }
