@@ -10,6 +10,8 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -26,11 +28,18 @@ class MainActivity : FlutterActivity() {
     private lateinit var sensorManager: SensorManager
     private var proximitySensor: Sensor? = null
     private var proximityWakeLock: PowerManager.WakeLock? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val proximityListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             val near = event.values[0] < (proximitySensor?.maximumRange ?: 5f)
-            // Route to earpiece when near (phone at ear), speaker when far
-            audioManager.isSpeakerphoneOn = !near
+            mainHandler.post {
+                // Only switch speaker/earpiece if no wired headset is connected.
+                // When headphones are plugged in, Android routes to them regardless
+                // of isSpeakerphoneOn, so we leave it alone to avoid interfering.
+                if (!isWiredHeadsetOn()) {
+                    audioManager.isSpeakerphoneOn = !near
+                }
+            }
         }
         override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
     }
@@ -53,9 +62,13 @@ class MainActivity : FlutterActivity() {
                             .build()
                         audioFocusRequest = focusRequest
                         audioManager.requestAudioFocus(focusRequest)
-                        // Default to speaker; receiver will switch to earphone if plugged in
-                        audioManager.isSpeakerphoneOn = !isWiredHeadsetOn()
                         registerHeadsetReceiver()
+                        // Post routing after the mode change has settled.
+                        // Calling setSpeakerphoneOn synchronously here races with
+                        // MODE_IN_COMMUNICATION taking effect and silently loses.
+                        mainHandler.post {
+                            audioManager.isSpeakerphoneOn = !isWiredHeadsetOn()
+                        }
                         result.success(null)
                     }
                     "stopAudioSession" -> {
@@ -88,8 +101,11 @@ class MainActivity : FlutterActivity() {
                         val wl = proximityWakeLock
                         if (wl != null && wl.isHeld) wl.release()
                         proximityWakeLock = null
-                        // Restore speaker after proximity is released
-                        audioManager.isSpeakerphoneOn = !isWiredHeadsetOn()
+                        // Restore routing — headset stays routed to headset,
+                        // no headset means back to speaker
+                        mainHandler.post {
+                            audioManager.isSpeakerphoneOn = !isWiredHeadsetOn()
+                        }
                         result.success(null)
                     }
                     else -> result.notImplemented()
