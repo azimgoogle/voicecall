@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../services/audio_service.dart';
 import '../services/call_log_service.dart';
 import '../services/firebase_signaling.dart';
 import '../services/foreground_service.dart';
@@ -110,6 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {});
 
     await _webrtc.init(isCaller: true, turnServer: _selectedTurnServer);
+    await AudioService.startAudioSession();
     final callId = _firebase.generateCallId(_myUserId, remoteId);
     _currentCallId = callId;
 
@@ -206,6 +208,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Caller already wrote "ended"; callee just cleans up.
     await _firebase.cancelListeners();
     await _webrtc.close();
+    if (_isCallerRole) await AudioService.stopAudioSession();
     _inCall = false;
     _isCallerRole = false;
     _currentCallId = null;
@@ -220,6 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     await _firebase.cancelListeners();
     await _webrtc.close();
+    await AudioService.stopAudioSession();
     _inCall = false;
     _isCallerRole = false;
     _currentCallId = null;
