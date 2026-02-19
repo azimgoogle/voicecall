@@ -31,6 +31,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String _selectedTurnServer = 'both';
 
   static const String _lastRemoteIdKey = 'last_remote_id';
+  static const String _callVolumeKey = 'call_volume';
+
+  // Per-call volume (0.0–1.0). Persisted across calls, never touches system volume.
+  double _callVolume = 1.0;
 
   // Call log tracking
   CallLogEntry? _currentLogEntry;
@@ -48,9 +52,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     final userId = prefs.getString('userId')!;
     final lastRemoteId = prefs.getString(_lastRemoteIdKey) ?? '';
+    final savedVolume = prefs.getDouble(_callVolumeKey) ?? 1.0;
     setState(() {
       _myUserId = userId;
       _remoteIdController.text = lastRemoteId;
+      _callVolume = savedVolume;
     });
 
     await _firebase.setUserOnline(_myUserId);
@@ -111,6 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {});
 
     await _webrtc.init(isCaller: true, turnServer: _selectedTurnServer);
+    await _webrtc.setRemoteVolume(_callVolume); // apply saved level; fires when track arrives
     await AudioService.startAudioSession();
     await AudioService.acquireProximityWakeLock();
     final callId = _firebase.generateCallId(_myUserId, remoteId);
@@ -255,6 +262,13 @@ class _HomeScreenState extends State<HomeScreen> {
         isCaller: _isCallerRole,
         onEndCall: _endCall,
         statsStream: _webrtc.statsStream,
+        initialVolume: _callVolume,
+        onVolumeChanged: (v) async {
+          setState(() => _callVolume = v);
+          await _webrtc.setRemoteVolume(v);
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setDouble(_callVolumeKey, v);
+        },
       );
     }
 

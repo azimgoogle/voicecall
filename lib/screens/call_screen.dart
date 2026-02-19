@@ -7,11 +7,20 @@ class CallScreen extends StatefulWidget {
   final VoidCallback onEndCall;
   final Stream<Map<String, dynamic>>? statsStream;
 
+  /// Initial volume level (0.0–1.0). Only used when [isCaller] is true.
+  final double initialVolume;
+
+  /// Called whenever the user moves the volume slider.
+  /// Receives the new level (0.0–1.0). Only fired when [isCaller] is true.
+  final void Function(double)? onVolumeChanged;
+
   const CallScreen({
     super.key,
     required this.isCaller,
     required this.onEndCall,
     this.statsStream,
+    this.initialVolume = 1.0,
+    this.onVolumeChanged,
   });
 
   @override
@@ -22,10 +31,12 @@ class _CallScreenState extends State<CallScreen> {
   int _bytesSent = 0;
   int _bytesReceived = 0;
   StreamSubscription<Map<String, dynamic>>? _statsSub;
+  late double _volume;
 
   @override
   void initState() {
     super.initState();
+    _volume = widget.initialVolume;
     if (widget.isCaller) {
       _statsSub = widget.statsStream?.listen((stats) {
         setState(() {
@@ -98,6 +109,46 @@ class _CallScreenState extends State<CallScreen> {
                           label: 'Received',
                           value: _formatBytes(_bytesReceived),
                         ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              // Volume control — does NOT change system volume
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Call Volume',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(Icons.volume_down,
+                            size: 20, color: Colors.grey),
+                        Expanded(
+                          child: Slider(
+                            value: _volume,
+                            min: 0.0,
+                            max: 1.0,
+                            divisions: 10,
+                            label:
+                                '${(_volume * 100).round()}%',
+                            onChanged: (v) {
+                              setState(() => _volume = v);
+                              widget.onVolumeChanged?.call(v);
+                            },
+                          ),
+                        ),
+                        const Icon(Icons.volume_up,
+                            size: 20, color: Colors.grey),
                       ],
                     ),
                   ],

@@ -11,6 +11,12 @@ class WebRtcService {
   final _statsController =
       StreamController<Map<String, dynamic>>.broadcast();
 
+  /// Remote audio track received by the caller — used for volume control.
+  MediaStreamTrack? _remoteAudioTrack;
+
+  /// Volume to apply as soon as the remote track arrives (0.0–1.0).
+  double? _pendingVolume;
+
   /// Stream of live stats: `{bytesSent: int, bytesReceived: int}`.
   /// Emits every second while the call is active.
   Stream<Map<String, dynamic>> get statsStream => _statsController.stream;
@@ -113,8 +119,20 @@ class WebRtcService {
       await _pc!.addTrack(track, _localStream!);
     }
 
-    // Callee: discard incoming remote audio — callee never hears caller
-    if (!isCaller) {
+    if (isCaller) {
+      // Caller: capture the remote audio track so volume can be adjusted.
+      // WebRTC plays it automatically; we just need a handle for Helper.setVolume.
+      _pc!.onTrack = (event) {
+        if (event.track.kind == 'audio') {
+          _remoteAudioTrack = event.track;
+          final pending = _pendingVolume;
+          if (pending != null) {
+            Helper.setVolume(pending, event.track);
+          }
+        }
+      };
+    } else {
+      // Callee: discard incoming remote audio — callee never hears caller
       _pc!.onTrack = (event) {
         // Discard remote tracks — callee doesn't play any audio
       };
@@ -236,6 +254,18 @@ class WebRtcService {
     return 'unknown';
   }
 
+  /// Set the receive-side volume for the caller (0.0 = silent, 1.0 = full).
+  /// Uses WebRTC's internal AudioTrack gain — no system volume change.
+  /// Safe to call before the remote track has arrived; value is applied
+  /// immediately once the track is received.
+  Future<void> setRemoteVolume(double volume) async {
+    _pendingVolume = volume;
+    final track = _remoteAudioTrack;
+    if (track != null) {
+      await Helper.setVolume(volume, track);
+    }
+  }
+
   /// Close peer connection and release media resources.
   Future<void> close() async {
     _statsTimer?.cancel();
@@ -245,5 +275,7 @@ class WebRtcService {
     _localStream = null;
     await _pc?.close();
     _pc = null;
+    _remoteAudioTrack = null;
+    _pendingVolume = null;
   }
 }
