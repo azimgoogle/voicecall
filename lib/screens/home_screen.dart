@@ -32,9 +32,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   static const String _lastRemoteIdKey = 'last_remote_id';
   static const String _callVolumeKey = 'call_volume';
+  static const String _callMuteKey = 'call_mute';
 
   // Per-call volume (0.0–1.0). Persisted across calls, never touches system volume.
   double _callVolume = 1.0;
+  bool _callMuted = false;
 
   // Call log tracking
   CallLogEntry? _currentLogEntry;
@@ -53,10 +55,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final userId = prefs.getString('userId')!;
     final lastRemoteId = prefs.getString(_lastRemoteIdKey) ?? '';
     final savedVolume = prefs.getDouble(_callVolumeKey) ?? 1.0;
+    final savedMute = prefs.getBool(_callMuteKey) ?? false;
     setState(() {
       _myUserId = userId;
       _remoteIdController.text = lastRemoteId;
       _callVolume = savedVolume;
+      _callMuted = savedMute;
     });
 
     await _firebase.setUserOnline(_myUserId);
@@ -263,15 +267,19 @@ class _HomeScreenState extends State<HomeScreen> {
         onEndCall: _endCall,
         statsStream: _webrtc.statsStream,
         initialVolume: _callVolume,
+        initialMuted: _callMuted,
         onVolumeChanged: (v) async {
           setState(() => _callVolume = v);
           await _webrtc.setRemoteVolume(v);
           final prefs = await SharedPreferences.getInstance();
           await prefs.setDouble(_callVolumeKey, v);
         },
-        // Mute applies 0.0 / restores _callVolume — never persists 0.0
-        onMuteToggled: (muted) =>
-            _webrtc.setRemoteVolume(muted ? 0.0 : _callVolume),
+        onMuteToggled: (muted) async {
+          setState(() => _callMuted = muted);
+          await _webrtc.setRemoteVolume(muted ? 0.0 : _callVolume);
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool(_callMuteKey, muted);
+        },
       );
     }
 

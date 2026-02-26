@@ -10,6 +10,9 @@ class CallScreen extends StatefulWidget {
   /// Initial volume level (0.0–1.0). Only used when [isCaller] is true.
   final double initialVolume;
 
+  /// Initial mute state. Only used when [isCaller] is true.
+  final bool initialMuted;
+
   /// Called whenever the user moves the volume slider.
   /// Receives the new level (0.0–1.0). Only fired when [isCaller] is true.
   final void Function(double)? onVolumeChanged;
@@ -26,6 +29,7 @@ class CallScreen extends StatefulWidget {
     required this.onEndCall,
     this.statsStream,
     this.initialVolume = 1.0,
+    this.initialMuted = false,
     this.onVolumeChanged,
     this.onMuteToggled,
   });
@@ -45,6 +49,7 @@ class _CallScreenState extends State<CallScreen> {
   void initState() {
     super.initState();
     _volume = widget.initialVolume;
+    _muted = widget.initialMuted;
     if (widget.isCaller) {
       _statsSub = widget.statsStream?.listen((stats) {
         setState(() {
