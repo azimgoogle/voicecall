@@ -8,4 +8,5 @@
 8. AI to summarize the call, alert when something unusual ongoing
 9. In App volume
 10. Pause or mute button at notif
-11. Options for handsfree or ear
+11. When in call, volume to control only in call volume (not impact the system volume)
+12. 
