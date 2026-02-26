@@ -116,6 +116,19 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lastRemoteIdKey, remoteId);
 
+    final callId = _firebase.generateCallId(_myUserId, remoteId);
+    _currentCallId = callId;
+
+    // Create the log entry BEFORE setState so callStartedAt is non-null
+    // when CallScreen first renders and the timer starts immediately.
+    _currentLogEntry = CallLogEntry(
+      callId: callId,
+      role: 'caller',
+      remoteUserId: remoteId,
+      turnServer: _selectedTurnServer,
+      startedAt: DateTime.now(),
+    );
+
     _inCall = true;
     _isCallerRole = true;
     setState(() {});
@@ -124,17 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await _webrtc.setRemoteVolume(_callVolume); // apply saved level; fires when track arrives
     await AudioService.startAudioSession();
     await AudioService.acquireProximityWakeLock();
-    final callId = _firebase.generateCallId(_myUserId, remoteId);
-    _currentCallId = callId;
 
-    // Start a log entry for this outgoing call
-    _currentLogEntry = CallLogEntry(
-      callId: callId,
-      role: 'caller',
-      remoteUserId: remoteId,
-      turnServer: _selectedTurnServer,
-      startedAt: DateTime.now(),
-    );
     await _logService.saveEntry(_currentLogEntry!);
     _startStatsTracking();
 
@@ -268,6 +271,7 @@ class _HomeScreenState extends State<HomeScreen> {
         statsStream: _webrtc.statsStream,
         initialVolume: _callVolume,
         initialMuted: _callMuted,
+        callStartedAt: _currentLogEntry?.startedAt,
         onVolumeChanged: (v) async {
           setState(() => _callVolume = v);
           await _webrtc.setRemoteVolume(v);

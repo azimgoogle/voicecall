@@ -13,6 +13,10 @@ class CallScreen extends StatefulWidget {
   /// Initial mute state. Only used when [isCaller] is true.
   final bool initialMuted;
 
+  /// When the call started. Used to display a live elapsed-time counter.
+  /// Only used when [isCaller] is true.
+  final DateTime? callStartedAt;
+
   /// Called whenever the user moves the volume slider.
   /// Receives the new level (0.0–1.0). Only fired when [isCaller] is true.
   final void Function(double)? onVolumeChanged;
@@ -30,6 +34,7 @@ class CallScreen extends StatefulWidget {
     this.statsStream,
     this.initialVolume = 1.0,
     this.initialMuted = false,
+    this.callStartedAt,
     this.onVolumeChanged,
     this.onMuteToggled,
   });
@@ -44,6 +49,8 @@ class _CallScreenState extends State<CallScreen> {
   StreamSubscription<Map<String, dynamic>>? _statsSub;
   late double _volume;
   bool _muted = false;
+  Timer? _clockTimer;
+  Duration _elapsed = Duration.zero;
 
   @override
   void initState() {
@@ -57,13 +64,33 @@ class _CallScreenState extends State<CallScreen> {
           _bytesReceived = stats['bytesReceived'] as int? ?? 0;
         });
       });
+
+      // Seed elapsed immediately so the first frame shows the correct time,
+      // then update every second in sync with wall clock.
+      final startedAt = widget.callStartedAt;
+      if (startedAt != null) {
+        _elapsed = DateTime.now().difference(startedAt);
+        _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          setState(() {
+            _elapsed = DateTime.now().difference(startedAt);
+          });
+        });
+      }
     }
   }
 
   @override
   void dispose() {
     _statsSub?.cancel();
+    _clockTimer?.cancel();
     super.dispose();
+  }
+
+  String _formatElapsed(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return h > 0 ? '$h:$m:$s' : '$m:$s';
   }
 
   String _formatBytes(int bytes) {
@@ -87,7 +114,18 @@ class _CallScreenState extends State<CallScreen> {
               style: const TextStyle(fontSize: 20),
             ),
             if (widget.isCaller) ...[
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+              if (widget.callStartedAt != null)
+                Text(
+                  _formatElapsed(_elapsed),
+                  style: const TextStyle(
+                    fontSize: 36,
+                    fontWeight: FontWeight.w300,
+                    letterSpacing: 2,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              const SizedBox(height: 24),
               Container(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 24, vertical: 16),
