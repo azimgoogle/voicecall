@@ -140,6 +140,24 @@ class FirebaseSignaling {
     return snap.value == true;
   }
 
+  /// Stream the live presence of a remote user.
+  /// Emits a map with keys: 'online' (bool) and 'onCall' (bool).
+  /// Cancel the returned subscription when the caller no longer needs it.
+  StreamSubscription listenForUserStatus(
+      String userId, void Function(bool online, bool onCall) callback) {
+    return _db.child('users/$userId').onValue.listen((event) {
+      final data = event.snapshot.value;
+      if (data == null) {
+        callback(false, false);
+        return;
+      }
+      final map = Map<String, dynamic>.from(data as Map);
+      final online = map['online'] == true;
+      final onCall = map['onCall'] == true;
+      callback(online, onCall);
+    });
+  }
+
   /// Listen for incoming calls on /users/{userId}/incomingCall.
   StreamSubscription listenForIncomingCall(
       String userId, void Function(String callId) callback) {

@@ -17,6 +17,60 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+/// Colour-coded presence badge shown below the Remote User ID field.
+///
+/// [online] = null  → no ID typed yet (hidden)
+/// [online] = false → Offline  (grey)
+/// [online] = true, [onCall] = false → Online  (green)
+/// [online] = true, [onCall] = true  → On call (orange)
+class _RemoteStatusBadge extends StatelessWidget {
+  const _RemoteStatusBadge({required this.online, required this.onCall});
+
+  final bool? online;
+  final bool onCall;
+
+  @override
+  Widget build(BuildContext context) {
+    if (online == null) return const SizedBox.shrink();
+
+    final Color dotColor;
+    final String label;
+
+    if (!online!) {
+      dotColor = Colors.grey;
+      label = 'Offline';
+    } else if (onCall) {
+      dotColor = Colors.orange;
+      label = 'On another call';
+    } else {
+      dotColor = Colors.green;
+      label = 'Online';
+    }
+
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: dotColor,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            color: dotColor,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _HomeScreenState extends State<HomeScreen> {
   String _myUserId = '';
   final _remoteIdController = TextEditingController();
@@ -25,10 +79,15 @@ class _HomeScreenState extends State<HomeScreen> {
   final _logService = CallLogService();
   StreamSubscription? _incomingCallSub;
   StreamSubscription? _statsSub;
+  StreamSubscription? _remoteStatusSub;
   bool _inCall = false;
   bool _isCallerRole = false;
   String? _currentCallId;
   String _selectedTurnServer = 'both';
+
+  // Live presence of the remote user shown in the dialer.
+  bool? _remoteOnline; // null = unknown (no ID typed yet)
+  bool _remoteOnCall = false;
 
   static const String _lastRemoteIdKey = 'last_remote_id';
   static const String _callVolumeKey = 'call_volume';
@@ -66,6 +125,36 @@ class _HomeScreenState extends State<HomeScreen> {
     await _firebase.setUserOnline(_myUserId);
     _listenForIncomingCalls();
     await startForegroundService();
+
+    // Start watching whatever ID is already in the field (restored from prefs).
+    _remoteIdController.addListener(_onRemoteIdChanged);
+    _watchRemoteUser(_remoteIdController.text.trim());
+  }
+
+  /// Called every time the Remote User ID field changes.
+  void _onRemoteIdChanged() {
+    _watchRemoteUser(_remoteIdController.text.trim());
+  }
+
+  /// Cancel the current remote-status listener and start a new one for [id].
+  void _watchRemoteUser(String id) {
+    _remoteStatusSub?.cancel();
+    _remoteStatusSub = null;
+    if (id.isEmpty) {
+      setState(() {
+        _remoteOnline = null;
+        _remoteOnCall = false;
+      });
+      return;
+    }
+    _remoteStatusSub = _firebase.listenForUserStatus(id, (online, onCall) {
+      if (mounted) {
+        setState(() {
+          _remoteOnline = online;
+          _remoteOnCall = onCall;
+        });
+      }
+    });
   }
 
   void _listenForIncomingCalls() {
@@ -278,8 +367,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _remoteIdController.removeListener(_onRemoteIdChanged);
     _incomingCallSub?.cancel();
     _statsSub?.cancel();
+    _remoteStatusSub?.cancel();
     if (_isCallerRole && _currentCallId != null) {
       _firebase.setStatus(_currentCallId!, 'ended');
     }
@@ -343,7 +434,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 8),
+            _RemoteStatusBadge(
+              online: _remoteOnline,
+              onCall: _remoteOnCall,
+            ),
+            const SizedBox(height: 16),
             const Text('TURN Server',
                 style: TextStyle(fontSize: 14, color: Colors.grey)),
             const SizedBox(height: 8),
@@ -374,7 +470,10 @@ class _HomeScreenState extends State<HomeScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _makeCall,
+                // Disable if: no ID typed, user is offline, or user is busy.
+                onPressed: (_remoteOnline == true && !_remoteOnCall)
+                    ? _makeCall
+                    : null,
                 child: const Text('Call'),
               ),
             ),
