@@ -85,6 +85,9 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _currentCallId;
   String _selectedTurnServer = 'both';
 
+  // Key used to call notifyRemoteDisconnected() on the active CallScreen.
+  final _callScreenKey = GlobalKey<CallScreenState>();
+
   // Live presence of the remote user shown in the dialer.
   bool? _remoteOnline; // null = unknown (no ID typed yet)
   bool _remoteOnCall = false;
@@ -237,6 +240,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _isCallerRole = true;
     setState(() {});
 
+    // Notify CallScreen when the remote side drops (WebRTC layer).
+    _webrtc.onConnectionLost = _onRemoteDisconnected;
+
     await _webrtc.init(isCaller: true, turnServer: _selectedTurnServer);
     await _webrtc.setRemoteVolume(_callVolume); // apply saved level; fires when track arrives
     await AudioService.startAudioSession();
@@ -328,6 +334,17 @@ class _HomeScreenState extends State<HomeScreen> {
     _firebase.listenForStatus(callId, 'ended', _onCallEnded);
   }
 
+  /// Fired by WebRTC (onConnectionLost) when the remote peer drops.
+  /// Shows the banner on CallScreen, then ends the call after its 2 s delay.
+  void _onRemoteDisconnected() {
+    _callScreenKey.currentState?.notifyRemoteDisconnected();
+    // The banner waits 2 s before calling onRemoteDisconnected → _endCall.
+    // If the key is stale (screen already gone), end immediately.
+    if (_callScreenKey.currentState == null) {
+      _endCall();
+    }
+  }
+
   void _onCallEnded() async {
     await _finaliseLog();
     // Clear busy flag — clean path exit.
@@ -383,12 +400,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     if (_inCall) {
       return CallScreen(
+        key: _callScreenKey,
         isCaller: _isCallerRole,
         onEndCall: _endCall,
         statsStream: _webrtc.statsStream,
         initialVolume: _callVolume,
         initialMuted: _callMuted,
         callStartedAt: _currentLogEntry?.startedAt,
+        onRemoteDisconnected: _isCallerRole ? _endCall : null,
         onVolumeChanged: (v) async {
           setState(() => _callVolume = v);
           await _webrtc.setRemoteVolume(v);

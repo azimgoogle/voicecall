@@ -39,6 +39,8 @@ class FirebaseSignaling {
   }
 
   /// Write answer to /calls/{callId}/answer
+  /// Also registers onDisconnect to set status→"ended" so a crash on the
+  /// callee's side auto-terminates the call in Firebase, notifying the caller.
   Future<void> writeAnswer({
     required String callId,
     required RTCSessionDescription answer,
@@ -47,6 +49,8 @@ class FirebaseSignaling {
       'sdp': answer.sdp,
       'type': answer.type,
     });
+    // Mirror of what writeOffer does for the caller side.
+    _db.child('calls/$callId/status').onDisconnect().set('ended');
   }
 
   /// Push an ICE candidate under offerCandidates or answerCandidates.

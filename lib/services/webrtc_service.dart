@@ -17,6 +17,11 @@ class WebRtcService {
   /// Volume to apply as soon as the remote track arrives (0.0–1.0).
   double? _pendingVolume;
 
+  /// Fired once when the peer connection permanently fails or disconnects.
+  /// Only the first terminal state triggers this — subsequent state changes
+  /// are ignored. Caller sets this before [init].
+  void Function()? onConnectionLost;
+
   /// Stream of live stats: `{bytesSent: int, bytesReceived: int}`.
   /// Emits every second while the call is active.
   Stream<Map<String, dynamic>> get statsStream => _statsController.stream;
@@ -103,6 +108,20 @@ class WebRtcService {
     };
 
     _pc = await createPeerConnection(rtcConfig);
+
+    // Monitor connection health. 'disconnected' can self-recover; 'failed'
+    // and 'closed' are terminal. Fire onConnectionLost only once.
+    bool _connectionLostFired = false;
+    _pc!.onConnectionState = (RTCPeerConnectionState state) {
+      if (_connectionLostFired) return;
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateClosed ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+        _connectionLostFired = true;
+        onConnectionLost?.call();
+      }
+    };
+
     _localStream = await navigator.mediaDevices.getUserMedia({
       'audio': true,
       'video': false,
@@ -268,6 +287,7 @@ class WebRtcService {
 
   /// Close peer connection and release media resources.
   Future<void> close() async {
+    onConnectionLost = null; // prevent stale callbacks after teardown
     _statsTimer?.cancel();
     _statsTimer = null;
     _localStream?.getTracks().forEach((t) => t.stop());

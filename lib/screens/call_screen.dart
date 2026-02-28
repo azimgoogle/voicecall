@@ -27,6 +27,11 @@ class CallScreen extends StatefulWidget {
   /// overwritten with 0.0 during a mute.
   final void Function(bool muted)? onMuteToggled;
 
+  /// Called when the remote side disconnects unexpectedly (caller-only).
+  /// HomeScreen wires this to its _endCall so the screen tears down after
+  /// the banner has been shown briefly.
+  final VoidCallback? onRemoteDisconnected;
+
   const CallScreen({
     super.key,
     required this.isCaller,
@@ -37,13 +42,14 @@ class CallScreen extends StatefulWidget {
     this.callStartedAt,
     this.onVolumeChanged,
     this.onMuteToggled,
+    this.onRemoteDisconnected,
   });
 
   @override
-  State<CallScreen> createState() => _CallScreenState();
+  State<CallScreen> createState() => CallScreenState();
 }
 
-class _CallScreenState extends State<CallScreen> {
+class CallScreenState extends State<CallScreen> {
   int _bytesSent = 0;
   int _bytesReceived = 0;
   StreamSubscription<Map<String, dynamic>>? _statsSub;
@@ -51,6 +57,7 @@ class _CallScreenState extends State<CallScreen> {
   bool _muted = false;
   Timer? _clockTimer;
   Duration _elapsed = Duration.zero;
+  bool _remoteDisconnected = false;
 
   @override
   void initState() {
@@ -77,6 +84,16 @@ class _CallScreenState extends State<CallScreen> {
         });
       }
     }
+  }
+
+  /// Called by HomeScreen when WebRTC or Firebase signals remote disconnect.
+  /// Shows a banner for 2 s, then triggers the full call teardown.
+  void notifyRemoteDisconnected() {
+    if (_remoteDisconnected || !mounted) return;
+    setState(() => _remoteDisconnected = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) widget.onRemoteDisconnected?.call();
+    });
   }
 
   @override
@@ -109,6 +126,32 @@ class _CallScreenState extends State<CallScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            if (widget.isCaller && _remoteDisconnected)
+              Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  border: Border.all(color: Colors.red.shade200),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.signal_cellular_connected_no_internet_4_bar,
+                        color: Colors.red.shade400, size: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Callee disconnected',
+                      style: TextStyle(
+                          color: Colors.red.shade700,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
             Text(
               widget.isCaller ? 'You are calling...' : 'In call...',
               style: const TextStyle(fontSize: 20),
