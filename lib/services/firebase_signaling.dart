@@ -13,6 +13,8 @@ class FirebaseSignaling {
   }
 
   /// Write offer + metadata to /calls/{callId}/
+  /// Also registers onDisconnect to set status→"ended" so a crash on the
+  /// caller's side auto-terminates the call in Firebase.
   Future<void> writeOffer({
     required String callId,
     required RTCSessionDescription offer,
@@ -25,6 +27,9 @@ class FirebaseSignaling {
       'caller': caller,
       'callee': callee,
     });
+    // If the caller disconnects (crash / network loss), Firebase server
+    // will automatically flip status to "ended" so the callee can clean up.
+    _db.child('calls/$callId/status').onDisconnect().set('ended');
   }
 
   /// Read offer from /calls/{callId}/offer
@@ -110,10 +115,29 @@ class FirebaseSignaling {
   }
 
   /// Set user online with auto-disconnect.
+  /// Also pre-registers onDisconnect to clear onCall so that a crash while
+  /// in a call doesn't leave the user permanently stuck in "busy" state.
   Future<void> setUserOnline(String userId) async {
     final ref = _db.child('users/$userId');
-    await ref.child('online').set(true);
-    ref.child('online').onDisconnect().set(false);
+    // Clear both fields atomically on disconnect (crash / network loss).
+    ref.onDisconnect().update({'online': false, 'onCall': false});
+    await ref.update({'online': true});
+  }
+
+  /// Mark the local user as currently on a call (or not).
+  /// Re-registers the onDisconnect guard each time so it always reflects
+  /// the latest state even after multiple calls in one session.
+  Future<void> setUserOnCall(String userId, bool onCall) async {
+    final ref = _db.child('users/$userId');
+    // Keep the disconnect handler current.
+    ref.onDisconnect().update({'online': false, 'onCall': false});
+    await ref.child('onCall').set(onCall);
+  }
+
+  /// Returns true if the remote user is currently in a call.
+  Future<bool> isUserBusy(String userId) async {
+    final snap = await _db.child('users/$userId/onCall').get();
+    return snap.value == true;
   }
 
   /// Listen for incoming calls on /users/{userId}/incomingCall.

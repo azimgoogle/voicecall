@@ -112,6 +112,21 @@ class _HomeScreenState extends State<HomeScreen> {
     final remoteId = _remoteIdController.text.trim();
     if (remoteId.isEmpty) return;
 
+    // --- Busy check ---
+    final isBusy = await _firebase.isUserBusy(remoteId);
+    if (isBusy) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$remoteId is currently on another call.'),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
     // Persist so it auto-populates next time
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lastRemoteIdKey, remoteId);
@@ -169,6 +184,11 @@ class _HomeScreenState extends State<HomeScreen> {
           data['candidate'], data['sdpMid'], data['sdpMLineIndex']);
     });
 
+    // When callee writes "active", mark the caller as on-call too.
+    _firebase.listenForStatus(callId, 'active', () {
+      _firebase.setUserOnCall(_myUserId, true);
+    });
+
     // Listen for call ended
     _firebase.listenForStatus(callId, 'ended', _onCallEnded);
   }
@@ -205,6 +225,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final answer = await _webrtc.createAnswer();
     await _firebase.writeAnswer(callId: callId, answer: answer);
     await _firebase.setStatus(callId, 'active');
+    // Mark callee as on-call so other callers see "busy".
+    await _firebase.setUserOnCall(_myUserId, true);
     await updateForegroundNotification('In call...');
 
     // Listen for remote ICE candidates (from caller)
@@ -219,6 +241,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onCallEnded() async {
     await _finaliseLog();
+    // Clear busy flag — clean path exit.
+    await _firebase.setUserOnCall(_myUserId, false);
     // Local cleanup only — no Firebase status write.
     // Caller already wrote "ended"; callee just cleans up.
     await _firebase.cancelListeners();
@@ -239,6 +263,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_currentCallId != null) {
       await _firebase.setStatus(_currentCallId!, 'ended');
     }
+    // Clear busy flag — clean path exit.
+    await _firebase.setUserOnCall(_myUserId, false);
     await _firebase.cancelListeners();
     await _webrtc.close();
     await AudioService.releaseProximityWakeLock();
