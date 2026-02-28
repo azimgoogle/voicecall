@@ -9,4 +9,4 @@
 9. In App volume
 10. Pause or mute button at notif
 11. When in call, volume to control only in call volume (not impact the system volume)
-12. 
+12. At samsung galaxy A54, notification is cancellable
