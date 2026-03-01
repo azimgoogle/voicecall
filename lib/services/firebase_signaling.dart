@@ -7,6 +7,8 @@ class FirebaseSignaling {
   final DatabaseReference _db = FirebaseDatabase.instance.ref();
   final List<StreamSubscription> _subs = [];
 
+  StreamSubscription? _connectedSub;
+
   /// Generate a call ID from caller, callee, and current timestamp.
   String generateCallId(String callerId, String calleeId) {
     return '${callerId}_${calleeId}_${DateTime.now().millisecondsSinceEpoch}';
@@ -118,14 +120,29 @@ class FirebaseSignaling {
     return snap.exists;
   }
 
-  /// Set user online with auto-disconnect.
-  /// Also pre-registers onDisconnect to clear onCall so that a crash while
-  /// in a call doesn't leave the user permanently stuck in "busy" state.
+  /// Set user online and keep them online across reconnects.
+  ///
+  /// Listens to `/.info/connected`. Every time Firebase reconnects (including
+  /// the initial connection and after any network interruption) it:
+  ///   1. Re-registers the onDisconnect guard (cleared on each disconnect).
+  ///   2. Writes online:true so the presence badge on other devices updates.
+  ///
+  /// This is the standard Firebase presence pattern — without it the user
+  /// stays offline:false after regaining network because the onDisconnect
+  /// handler fires once and is never re-registered.
   Future<void> setUserOnline(String userId) async {
-    final ref = _db.child('users/$userId');
-    // Clear both fields atomically on disconnect (crash / network loss).
-    ref.onDisconnect().update({'online': false, 'onCall': false});
-    await ref.update({'online': true});
+    _connectedSub?.cancel();
+
+    _connectedSub = _db.child('.info/connected').onValue.listen((event) {
+      final connected = event.snapshot.value == true;
+      if (!connected) return; // wait for the reconnect event
+
+      final ref = _db.child('users/$userId');
+      // Must re-register onDisconnect on every new connection — the server
+      // discards the previous handler when the socket closes.
+      ref.onDisconnect().update({'online': false, 'onCall': false});
+      ref.update({'online': true});
+    });
   }
 
   /// Mark the local user as currently on a call (or not).
@@ -175,11 +192,13 @@ class FirebaseSignaling {
     });
   }
 
-  /// Cancel all active Firebase listeners.
+  /// Cancel all active Firebase listeners, including the presence watcher.
   Future<void> cancelListeners() async {
     for (final sub in _subs) {
       await sub.cancel();
     }
     _subs.clear();
+    await _connectedSub?.cancel();
+    _connectedSub = null;
   }
 }
