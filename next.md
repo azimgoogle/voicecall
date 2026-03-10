@@ -10,3 +10,7 @@
 10. Pause or mute button at notif
 11. When in call, volume to control only in call volume (not impact the system volume)
 12. At samsung galaxy A54, notification is cancellable
+13. Verify the plan of market demand
+14. Start with Boot in setting page
+15. Pixel last day bugs fix
+16. Alarm or auto notif. This is different level - may be done via the callee side easily
