@@ -176,7 +176,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription? _remoteStatusSub;
   bool _inCall = false;
   bool _isCallerRole = false;
-  String? _currentCallId;
+
   String _selectedTurnServer = 'both';
 
   // Key used to call notifyRemoteDisconnected() on the active CallScreen.
@@ -265,7 +265,6 @@ class _HomeScreenState extends State<HomeScreen> {
         if (_inCall) return;
         _inCall = true;
         _isCallerRole = false;
-        _currentCallId = callId;
         await _answerCall(callId);
         if (mounted) setState(() {});
       },
@@ -322,7 +321,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.setString(_lastRemoteIdKey, remoteId);
 
     final callId = _firebase.generateCallId(_myUserId, remoteId);
-    _currentCallId = callId;
 
     // Create the log entry BEFORE setState so callStartedAt is non-null
     // when CallScreen first renders and the timer starts immediately.
@@ -337,6 +335,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _inCall = true;
     _isCallerRole = true;
     setState(() {});
+    await _firebase.setUserOnCall(_myUserId, true);
 
     // Notify CallScreen when the remote side drops (WebRTC layer).
     _webrtc.onConnectionLost = _onRemoteDisconnected;
@@ -372,6 +371,13 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_inCall && !_callConnected) _onCallTimeout();
     });
 
+    // Cancel timeout when WebRTC connection is established.
+    _webrtc.onConnectionEstablished = () {
+      _callConnected = true;
+      _callTimeoutTimer?.cancel();
+      _callTimeoutTimer = null;
+    };
+
     // Listen for answer
     _firebase.listenForAnswer(callId, (answerData) {
       _webrtc.setRemoteDescription(answerData['sdp'], answerData['type']);
@@ -382,22 +388,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _webrtc.addIceCandidate(
           data['candidate'], data['sdpMid'], data['sdpMLineIndex']);
     });
-
-    // When callee writes "active", mark the caller as on-call too.
-    // Also cancel the timeout — the call connected successfully.
-    _firebase.listenForStatus(callId, 'active', () {
-      _callConnected = true;
-      _callTimeoutTimer?.cancel();
-      _callTimeoutTimer = null;
-      _firebase.setUserOnCall(_myUserId, true);
-    });
-
-    // Listen for call ended
-    _firebase.listenForStatus(callId, 'ended', _onCallEnded);
   }
 
   /// Callee: read offer → create answer → exchange ICE
   Future<void> _answerCall(String callId) async {
+    _webrtc.onConnectionLost = _onCallEnded;
     await _webrtc.init(isCaller: false);
 
     // Derive remote user ID from callId format: {callerId}_{calleeId}_{ts}
@@ -427,7 +422,6 @@ class _HomeScreenState extends State<HomeScreen> {
     // Create and write answer
     final answer = await _webrtc.createAnswer();
     await _firebase.writeAnswer(callId: callId, answer: answer);
-    await _firebase.setStatus(callId, 'active');
     // Mark callee as on-call so other callers see "busy".
     await _firebase.setUserOnCall(_myUserId, true);
     await updateForegroundNotification('In call...');
@@ -437,9 +431,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _webrtc.addIceCandidate(
           data['candidate'], data['sdpMid'], data['sdpMLineIndex']);
     });
-
-    // Listen for call ended
-    _firebase.listenForStatus(callId, 'ended', _onCallEnded);
   }
 
   /// Fired when the 30-second connection timeout expires without a connection.
@@ -475,8 +466,6 @@ class _HomeScreenState extends State<HomeScreen> {
     await _finaliseLog();
     // Clear busy flag — clean path exit.
     await _firebase.setUserOnCall(_myUserId, false);
-    // Local cleanup only — no Firebase status write.
-    // Caller already wrote "ended"; callee just cleans up.
     await _firebase.cancelListeners();
     await _webrtc.close();
     if (_isCallerRole) {
@@ -485,7 +474,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     _inCall = false;
     _isCallerRole = false;
-    _currentCallId = null;
+
     await updateForegroundNotification('Waiting for calls...');
     if (mounted) setState(() {});
   }
@@ -495,9 +484,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _callTimeoutTimer = null;
     _callConnected = false;
     await _finaliseLog();
-    if (_currentCallId != null) {
-      await _firebase.setStatus(_currentCallId!, 'ended');
-    }
     // Clear busy flag — clean path exit.
     await _firebase.setUserOnCall(_myUserId, false);
     await _firebase.cancelListeners();
@@ -506,7 +492,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await AudioService.stopAudioSession();
     _inCall = false;
     _isCallerRole = false;
-    _currentCallId = null;
+
     await updateForegroundNotification('Waiting for calls...');
     if (mounted) setState(() {});
   }
@@ -518,9 +504,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _incomingCallSub?.cancel();
     _statsSub?.cancel();
     _remoteStatusSub?.cancel();
-    if (_isCallerRole && _currentCallId != null) {
-      _firebase.setStatus(_currentCallId!, 'ended');
-    }
     _firebase.cancelListeners();
     _webrtc.close();
     super.dispose();

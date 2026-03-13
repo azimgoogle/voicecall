@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' show VoidCallback;
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -15,8 +14,6 @@ class FirebaseSignaling {
   }
 
   /// Write offer + metadata to /calls/{callId}/
-  /// Also registers onDisconnect to set status→"ended" so a crash on the
-  /// caller's side auto-terminates the call in Firebase.
   Future<void> writeOffer({
     required String callId,
     required RTCSessionDescription offer,
@@ -25,13 +22,9 @@ class FirebaseSignaling {
   }) async {
     await _db.child('calls/$callId').set({
       'offer': {'sdp': offer.sdp, 'type': offer.type},
-      'status': 'waiting',
       'caller': caller,
       'callee': callee,
     });
-    // If the caller disconnects (crash / network loss), Firebase server
-    // will automatically flip status to "ended" so the callee can clean up.
-    _db.child('calls/$callId/status').onDisconnect().set('ended');
   }
 
   /// Read offer from /calls/{callId}/offer
@@ -41,8 +34,6 @@ class FirebaseSignaling {
   }
 
   /// Write answer to /calls/{callId}/answer
-  /// Also registers onDisconnect to set status→"ended" so a crash on the
-  /// callee's side auto-terminates the call in Firebase, notifying the caller.
   Future<void> writeAnswer({
     required String callId,
     required RTCSessionDescription answer,
@@ -51,8 +42,6 @@ class FirebaseSignaling {
       'sdp': answer.sdp,
       'type': answer.type,
     });
-    // Mirror of what writeOffer does for the caller side.
-    _db.child('calls/$callId/status').onDisconnect().set('ended');
   }
 
   /// Push an ICE candidate under offerCandidates or answerCandidates.
@@ -75,11 +64,6 @@ class FirebaseSignaling {
     await _db.child('users/$remoteUserId/incomingCall').set(callId);
   }
 
-  /// Set call status (waiting / active / ended).
-  Future<void> setStatus(String callId, String status) async {
-    await _db.child('calls/$callId/status').set(status);
-  }
-
   /// Listen for answer on /calls/{callId}/answer.
   void listenForAnswer(
       String callId, void Function(Map<String, dynamic> answer) callback) {
@@ -100,16 +84,6 @@ class FirebaseSignaling {
     final node = fromCaller ? 'offerCandidates' : 'answerCandidates';
     _subs.add(_db.child('calls/$callId/$node').onChildAdded.listen((event) {
       callback(Map<String, dynamic>.from(event.snapshot.value as Map));
-    }));
-  }
-
-  /// Listen for call status becoming [targetStatus].
-  void listenForStatus(
-      String callId, String targetStatus, VoidCallback callback) {
-    _subs.add(_db.child('calls/$callId/status').onValue.listen((event) {
-      if (event.snapshot.value == targetStatus) {
-        callback();
-      }
     }));
   }
 

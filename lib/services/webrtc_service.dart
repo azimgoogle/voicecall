@@ -22,6 +22,9 @@ class WebRtcService {
   /// are ignored. Caller sets this before [init].
   void Function()? onConnectionLost;
 
+  /// Fired when the peer connection reaches the 'connected' state.
+  void Function()? onConnectionEstablished;
+
   /// Stream of live stats: `{bytesSent: int, bytesReceived: int}`.
   /// Emits every second while the call is active.
   Stream<Map<String, dynamic>> get statsStream => _statsController.stream;
@@ -113,6 +116,9 @@ class WebRtcService {
     // and 'closed' are terminal. Fire onConnectionLost only once.
     bool _connectionLostFired = false;
     _pc!.onConnectionState = (RTCPeerConnectionState state) {
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        onConnectionEstablished?.call();
+      }
       if (_connectionLostFired) return;
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed ||
@@ -288,6 +294,7 @@ class WebRtcService {
   /// Close peer connection and release media resources.
   Future<void> close() async {
     onConnectionLost = null; // prevent stale callbacks after teardown
+    onConnectionEstablished = null;
     _statsTimer?.cancel();
     _statsTimer = null;
     _localStream?.getTracks().forEach((t) => t.stop());
