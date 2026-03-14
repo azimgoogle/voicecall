@@ -33,16 +33,28 @@ Future<void> startForegroundService() async {
   );
 }
 
-/// Update notification text.
-/// Pass [showEndCall] = true (caller only) to add an End Call action button.
-Future<void> updateForegroundNotification(String text,
-    {bool showEndCall = false}) async {
+/// Update notification text and action buttons.
+/// [showEndCall] adds an End Call button (caller and callee).
+/// [showMute] adds a Mute/Unmute toggle button (caller only).
+/// [isMuted] controls the label: true → "Unmute", false → "Mute".
+Future<void> updateForegroundNotification(
+  String text, {
+  bool showEndCall = false,
+  bool showMute = false,
+  bool isMuted = false,
+}) async {
   await FlutterForegroundTask.updateService(
     notificationTitle: 'Voice Call',
     notificationText: text,
-    notificationButtons: showEndCall
-        ? [NotificationButton(id: 'end_call', text: 'End Call')]
-        : [],
+    notificationButtons: [
+      if (showMute)
+        NotificationButton(
+          id: isMuted ? 'unmute' : 'mute',
+          text: isMuted ? 'Unmute' : 'Mute',
+        ),
+      if (showEndCall)
+        NotificationButton(id: 'end_call', text: 'End Call'),
+    ],
   );
 }
 

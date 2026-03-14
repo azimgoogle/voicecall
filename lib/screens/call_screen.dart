@@ -86,6 +86,13 @@ class CallScreenState extends State<CallScreen> {
     }
   }
 
+  /// Called by HomeScreen when mute is toggled externally (e.g. notification button),
+  /// so the in-app mute icon stays in sync without waiting for a rebuild.
+  void setMuted(bool muted) {
+    if (!mounted || _muted == muted) return;
+    setState(() => _muted = muted);
+  }
+
   /// Called by HomeScreen when WebRTC or Firebase signals remote disconnect.
   /// Shows a banner for 2 s, then triggers the full call teardown.
   void notifyRemoteDisconnected() {

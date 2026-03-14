@@ -86,11 +86,37 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Receives data forwarded from the foreground TaskHandler.
-  /// Handles the notification "End Call" button (both caller and callee).
+  /// Handles the notification "End Call" button (both caller and callee)
+  /// and the "Mute / Unmute" button (caller only).
+  /// The button ID carries the desired target state, so we set explicitly
+  /// rather than toggling — prevents drift from rapid taps or async timing.
   void _onForegroundData(Object data) {
-    if (data == 'end_call' && _inCall) {
+    if (!_inCall) return;
+    if (data == 'end_call') {
       _endCall();
+    } else if (data == 'mute' && _isCallerRole) {
+      _applyMute(true);
+    } else if (data == 'unmute' && _isCallerRole) {
+      _applyMute(false);
     }
+  }
+
+  /// Single source of truth for all mute state changes (notification button,
+  /// in-app button). Sets WebRTC volume, syncs CallScreen UI, persists
+  /// preference, and refreshes the notification button label.
+  Future<void> _applyMute(bool muted) async {
+    if (_callMuted == muted) return;
+    setState(() => _callMuted = muted);
+    _callScreenKey.currentState?.setMuted(muted);
+    await _webrtc.setRemoteVolume(muted ? 0.0 : _callVolume);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_callMuteKey, muted);
+    await updateForegroundNotification(
+      'In call...',
+      showEndCall: true,
+      showMute: true,
+      isMuted: muted,
+    );
   }
 
   void _listenForIncomingCalls() {
@@ -212,6 +238,10 @@ class _HomeScreenState extends State<HomeScreen> {
       startedAt: DateTime.now(),
     );
 
+    // Always start each call unmuted regardless of the previous call's state.
+    _callMuted = false;
+    await prefs.setBool(_callMuteKey, false);
+
     _inCall = true;
     _isCallerRole = true;
     setState(() {});
@@ -242,7 +272,12 @@ class _HomeScreenState extends State<HomeScreen> {
       callee: remoteId,
     );
     await _firebase.notifyRemoteUser(remoteId, callId);
-    await updateForegroundNotification('In call...', showEndCall: true);
+    await updateForegroundNotification(
+      'In call...',
+      showEndCall: true,
+      showMute: true,
+      isMuted: _callMuted,
+    );
 
     // Start connection timeout — if callee doesn't answer in 30 s, hang up.
     _callConnected = false;
@@ -465,12 +500,7 @@ class _HomeScreenState extends State<HomeScreen> {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setDouble(_callVolumeKey, v);
         },
-        onMuteToggled: (muted) async {
-          setState(() => _callMuted = muted);
-          await _webrtc.setRemoteVolume(muted ? 0.0 : _callVolume);
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setBool(_callMuteKey, muted);
-        },
+        onMuteToggled: (muted) => _applyMute(muted),
       );
     }
 
