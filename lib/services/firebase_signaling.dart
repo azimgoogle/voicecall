@@ -153,6 +153,23 @@ class FirebaseSignaling {
     });
   }
 
+  /// Write a busy signal to the caller's user node.
+  /// Called by the callee when it receives an incoming call but is already in a call.
+  Future<void> writeBusySignal(String callerId) async {
+    await _db.child('users/$callerId/busySignal').set(true);
+  }
+
+  /// Listen for a busy signal on the caller's own node.
+  /// Fires once when the callee writes the signal, then clears it.
+  void listenForBusySignal(String userId, void Function() callback) {
+    _subs.add(_db.child('users/$userId/busySignal').onValue.listen((event) async {
+      if (event.snapshot.value != null) {
+        await _db.child('users/$userId/busySignal').remove();
+        callback();
+      }
+    }));
+  }
+
   /// Listen for incoming calls on /users/{userId}/incomingCall.
   StreamSubscription listenForIncomingCall(
       String userId, void Function(String callId) callback) {

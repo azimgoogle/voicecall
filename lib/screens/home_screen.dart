@@ -262,7 +262,12 @@ class _HomeScreenState extends State<HomeScreen> {
     _incomingCallSub = _firebase.listenForIncomingCall(
       _myUserId,
       (callId) async {
-        if (_inCall) return;
+        if (_inCall) {
+          // Tell the caller we're busy — extract callerId from callId format: {callerId}_{calleeId}_{ts}
+          final callerId = callId.split('_').first;
+          await _firebase.writeBusySignal(callerId);
+          return;
+        }
         _inCall = true;
         _isCallerRole = false;
         await _answerCall(callId);
@@ -378,6 +383,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _callTimeoutTimer = null;
     };
 
+    // Listen for busy signal from callee
+    _firebase.listenForBusySignal(_myUserId, _onCalleeBusy);
+
     // Listen for answer
     _firebase.listenForAnswer(callId, (answerData) {
       _webrtc.setRemoteDescription(answerData['sdp'], answerData['type']);
@@ -431,6 +439,22 @@ class _HomeScreenState extends State<HomeScreen> {
       _webrtc.addIceCandidate(
           data['candidate'], data['sdpMid'], data['sdpMLineIndex']);
     });
+  }
+
+  /// Fired when the callee writes a busy signal — they're already in a call.
+  void _onCalleeBusy() {
+    _callTimeoutTimer?.cancel();
+    _callTimeoutTimer = null;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${_remoteIdController.text.trim()} is busy.'),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+    _endCall();
   }
 
   /// Fired when the 30-second connection timeout expires without a connection.
