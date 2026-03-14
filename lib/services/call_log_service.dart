@@ -2,8 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// How many days of call history to retain.
-/// Change this single constant to adjust the retention window.
+/// Fallback retention when no user preference is saved yet.
 const int kCallLogRetentionDays = 7;
 
 /// A single call log entry.
@@ -82,9 +81,15 @@ class CallLogEntry {
 }
 
 /// Persists and retrieves call logs via SharedPreferences.
-/// Automatically prunes entries older than [kCallLogRetentionDays].
+/// Retention window is read dynamically from user settings.
 class CallLogService {
   static const String _prefsKey = 'call_logs';
+
+  /// Reads the user-configured retention days. Falls back to [kCallLogRetentionDays].
+  Future<int> _getRetentionDays() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt('settings_retention_days') ?? kCallLogRetentionDays;
+  }
 
   /// Load all logs within the retention window, sorted newest first.
   Future<List<CallLogEntry>> loadLogs() async {
@@ -92,9 +97,9 @@ class CallLogService {
     final raw = prefs.getString(_prefsKey);
     if (raw == null) return [];
 
+    final retentionDays = await _getRetentionDays();
     final List<dynamic> jsonList = jsonDecode(raw);
-    final cutoff = DateTime.now()
-        .subtract(Duration(days: kCallLogRetentionDays));
+    final cutoff = DateTime.now().subtract(Duration(days: retentionDays));
 
     return jsonList
         .map((e) => CallLogEntry.fromJson(e as Map<String, dynamic>))
@@ -107,6 +112,7 @@ class CallLogService {
   Future<void> saveEntry(CallLogEntry entry) async {
     final prefs = await SharedPreferences.getInstance();
     final existing = await loadLogs();
+    final retentionDays = await _getRetentionDays();
 
     // Replace if same callId exists (e.g. updating with end time + bytes)
     final updated = [
@@ -115,8 +121,7 @@ class CallLogService {
     ];
 
     // Prune anything beyond the retention window
-    final cutoff = DateTime.now()
-        .subtract(Duration(days: kCallLogRetentionDays));
+    final cutoff = DateTime.now().subtract(Duration(days: retentionDays));
     final pruned =
         updated.where((e) => e.startedAt.isAfter(cutoff)).toList();
 

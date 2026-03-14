@@ -109,6 +109,23 @@ class FirebaseSignaling {
     }));
   }
 
+  /// Write a cancellation signal so a waiting callee can dismiss its answer screen.
+  Future<void> writeCancelledSignal(String callId) async {
+    await _db.child('calls/$callId/cancelled').set(true);
+  }
+
+  /// Listen for a cancellation on /calls/{callId}/cancelled.
+  /// Returns the subscription so the caller can manage its lifecycle independently
+  /// (it must NOT be in _subs — the callee cancels it manually on answer).
+  StreamSubscription listenForCallCancelled(
+      String callId, void Function() callback) {
+    return _db.child('calls/$callId/cancelled').onValue.listen((event) {
+      if (event.snapshot.value == true) {
+        callback();
+      }
+    });
+  }
+
   /// Listen for incoming calls on /users/{userId}/incomingCall.
   StreamSubscription listenForIncomingCall(
       String userId, void Function(String callId) callback) {

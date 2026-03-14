@@ -14,3 +14,4 @@
 14. Start with Boot in setting page
 15. Pixel last day bugs fix
 16. Alarm or auto notif. This is different level - may be done via the callee side easily
+17. Seek notif permission

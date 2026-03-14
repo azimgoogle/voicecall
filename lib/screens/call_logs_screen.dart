@@ -117,7 +117,7 @@ class _CallLogsScreenState extends State<CallLogsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Call Logs (last $kCallLogRetentionDays days)'),
+        title: const Text('Call Logs'),
         actions: [
           if (_logs.isNotEmpty)
             IconButton(

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -7,9 +8,11 @@ import '../services/audio_service.dart';
 import '../services/call_log_service.dart';
 import '../services/firebase_signaling.dart';
 import '../services/foreground_service.dart';
+import '../services/settings_service.dart';
 import '../services/webrtc_service.dart';
 import 'call_logs_screen.dart';
 import 'call_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,10 +26,17 @@ class _HomeScreenState extends State<HomeScreen> {
   final _firebase = FirebaseSignaling();
   final _webrtc = WebRtcService();
   final _logService = CallLogService();
+  final _settingsService = SettingsService();
   StreamSubscription? _incomingCallSub;
   StreamSubscription? _statsSub;
+  StreamSubscription? _incomingCallCancelSub;
+  Timer? _incomingCallTimeoutTimer;
   bool _inCall = false;
   bool _isCallerRole = false;
+
+  // Non-null when a non-whitelisted call is waiting for the user to answer.
+  String? _incomingCallId;
+  String? _incomingCallerId;
 
   String _selectedTurnServer = 'both';
 
@@ -72,24 +82,88 @@ class _HomeScreenState extends State<HomeScreen> {
 
     _listenForIncomingCalls();
     await startForegroundService();
+    FlutterForegroundTask.addTaskDataCallback(_onForegroundData);
+  }
+
+  /// Receives data forwarded from the foreground TaskHandler.
+  /// Currently handles the notification "End Call" button (caller-only).
+  void _onForegroundData(Object data) {
+    if (data == 'end_call' && _inCall && _isCallerRole) {
+      _endCall();
+    }
   }
 
   void _listenForIncomingCalls() {
     _incomingCallSub = _firebase.listenForIncomingCall(
       _myUserId,
       (callId) async {
+        final callerId = callId.split('_').first;
+
         if (_inCall) {
-          // Tell the caller we're busy — extract callerId from callId format: {callerId}_{calleeId}_{ts}
-          final callerId = callId.split('_').first;
           await _firebase.writeBusySignal(callerId);
           return;
         }
-        _inCall = true;
-        _isCallerRole = false;
-        await _answerCall(callId);
-        if (mounted) setState(() {});
+
+        // If a non-whitelisted call is already pending, report busy to the new caller.
+        if (_incomingCallId != null) {
+          await _firebase.writeBusySignal(callerId);
+          return;
+        }
+
+        final autoAnswer = await _settingsService.isAutoAnswer(callerId);
+        if (autoAnswer) {
+          _inCall = true;
+          _isCallerRole = false;
+          await _answerCall(callId);
+          if (mounted) setState(() {});
+        } else {
+          if (mounted) {
+            setState(() {
+              _incomingCallId = callId;
+              _incomingCallerId = callerId;
+            });
+          }
+          // Watch for the caller cancelling before the user answers.
+          _incomingCallCancelSub = _firebase.listenForCallCancelled(
+              callId, _onIncomingCallCancelled);
+          // Safety-net: auto-dismiss after 40 s if the cancellation signal
+          // never arrives (e.g. caller crashed before writing it).
+          _incomingCallTimeoutTimer =
+              Timer(const Duration(seconds: 40), _onIncomingCallCancelled);
+        }
       },
     );
+  }
+
+  /// Fired when the caller cancels before the user answers,
+  /// or when the callee-side 40 s safety timeout fires.
+  void _onIncomingCallCancelled() {
+    _incomingCallTimeoutTimer?.cancel();
+    _incomingCallTimeoutTimer = null;
+    _incomingCallCancelSub?.cancel();
+    _incomingCallCancelSub = null;
+    if (mounted) {
+      setState(() {
+        _incomingCallId = null;
+        _incomingCallerId = null;
+      });
+    }
+  }
+
+  /// Accept a pending incoming call from the Answer button.
+  Future<void> _acceptIncomingCall() async {
+    final callId = _incomingCallId!;
+    _incomingCallTimeoutTimer?.cancel();
+    _incomingCallTimeoutTimer = null;
+    _incomingCallCancelSub?.cancel();
+    _incomingCallCancelSub = null;
+    setState(() {
+      _incomingCallId = null;
+      _incomingCallerId = null;
+      _inCall = true;
+      _isCallerRole = false;
+    });
+    await _answerCall(callId);
   }
 
   /// Start tracking stats into the current log entry (caller only).
@@ -168,7 +242,7 @@ class _HomeScreenState extends State<HomeScreen> {
       callee: remoteId,
     );
     await _firebase.notifyRemoteUser(remoteId, callId);
-    await updateForegroundNotification('In call...');
+    await updateForegroundNotification('In call...', showEndCall: true);
 
     // Start connection timeout — if callee doesn't answer in 30 s, hang up.
     _callConnected = false;
@@ -285,6 +359,10 @@ class _HomeScreenState extends State<HomeScreen> {
     _callTimeoutTimer?.cancel();
     _callTimeoutTimer = null;
     _callConnected = false;
+    _incomingCallTimeoutTimer?.cancel();
+    _incomingCallTimeoutTimer = null;
+    _incomingCallCancelSub?.cancel();
+    _incomingCallCancelSub = null;
     await _finaliseLog();
     await _firebase.cancelListeners();
     await _webrtc.close();
@@ -294,7 +372,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     _inCall = false;
     _isCallerRole = false;
-
+    _incomingCallId = null;
+    _incomingCallerId = null;
     await updateForegroundNotification('Waiting for calls...');
     if (mounted) setState(() {});
   }
@@ -303,14 +382,19 @@ class _HomeScreenState extends State<HomeScreen> {
     _callTimeoutTimer?.cancel();
     _callTimeoutTimer = null;
     _callConnected = false;
+    // Capture callId BEFORE _finaliseLog nulls out _currentLogEntry.
+    final callId = _currentLogEntry?.callId;
     await _finaliseLog();
+    // Signal callee to dismiss its answer screen if it hasn't answered yet.
+    if (callId != null) await _firebase.writeCancelledSignal(callId);
     await _firebase.cancelListeners();
     await _webrtc.close();
     await AudioService.releaseProximityWakeLock();
     await AudioService.stopAudioSession();
     _inCall = false;
     _isCallerRole = false;
-
+    _incomingCallId = null;
+    _incomingCallerId = null;
     await updateForegroundNotification('Waiting for calls...');
     if (mounted) setState(() {});
   }
@@ -318,11 +402,49 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _callTimeoutTimer?.cancel();
+    _incomingCallTimeoutTimer?.cancel();
     _incomingCallSub?.cancel();
     _statsSub?.cancel();
+    _incomingCallCancelSub?.cancel();
+    FlutterForegroundTask.removeTaskDataCallback(_onForegroundData);
     _firebase.cancelListeners();
     _webrtc.close();
     super.dispose();
+  }
+
+  Widget _buildIncomingCallScreen() {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.phone_in_talk, size: 80, color: Colors.green),
+            const SizedBox(height: 24),
+            const Text('Incoming call from',
+                style: TextStyle(fontSize: 16, color: Colors.grey)),
+            const SizedBox(height: 8),
+            Text(
+              _incomingCallerId ?? '',
+              style: const TextStyle(
+                  fontSize: 28, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 48),
+            ElevatedButton.icon(
+              onPressed: _acceptIncomingCall,
+              icon: const Icon(Icons.phone),
+              label: const Text('Answer',
+                  style: TextStyle(fontSize: 18)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 48, vertical: 16),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -352,10 +474,22 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
+    if (_incomingCallId != null) {
+      return _buildIncomingCallScreen();
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Voice Call POC'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Call Logs',

@@ -33,11 +33,16 @@ Future<void> startForegroundService() async {
   );
 }
 
-/// Update notification text (e.g., when call starts/ends).
-Future<void> updateForegroundNotification(String text) async {
+/// Update notification text.
+/// Pass [showEndCall] = true (caller only) to add an End Call action button.
+Future<void> updateForegroundNotification(String text,
+    {bool showEndCall = false}) async {
   await FlutterForegroundTask.updateService(
     notificationTitle: 'Voice Call',
     notificationText: text,
+    notificationButtons: showEndCall
+        ? [NotificationButton(id: 'end_call', text: 'End Call')]
+        : [],
   );
 }
 
@@ -67,7 +72,10 @@ class _CallTaskHandler extends TaskHandler {
   void onReceiveData(Object data) {}
 
   @override
-  void onNotificationButtonPressed(String id) {}
+  void onNotificationButtonPressed(String id) {
+    // Forward button ID to the main isolate so HomeScreen can react.
+    FlutterForegroundTask.sendDataToMain(id);
+  }
 
   @override
   void onNotificationPressed() {}
