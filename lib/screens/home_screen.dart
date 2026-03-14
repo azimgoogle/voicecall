@@ -86,9 +86,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Receives data forwarded from the foreground TaskHandler.
-  /// Currently handles the notification "End Call" button (caller-only).
+  /// Handles the notification "End Call" button (both caller and callee).
   void _onForegroundData(Object data) {
-    if (data == 'end_call' && _inCall && _isCallerRole) {
+    if (data == 'end_call' && _inCall) {
       _endCall();
     }
   }
@@ -304,7 +304,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Create and write answer
     final answer = await _webrtc.createAnswer();
     await _firebase.writeAnswer(callId: callId, answer: answer);
-    await updateForegroundNotification('In call...');
+    await updateForegroundNotification('In call...', showEndCall: true);
 
     // Listen for remote ICE candidates (from caller)
     _firebase.listenForIceCandidates(callId, true, (data) {
