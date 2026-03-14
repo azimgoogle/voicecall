@@ -6,8 +6,6 @@ class FirebaseSignaling {
   final DatabaseReference _db = FirebaseDatabase.instance.ref();
   final List<StreamSubscription> _subs = [];
 
-  StreamSubscription? _connectedSub;
-
   /// Generate a call ID from caller, callee, and current timestamp.
   String generateCallId(String callerId, String calleeId) {
     return '${callerId}_${calleeId}_${DateTime.now().millisecondsSinceEpoch}';
@@ -94,65 +92,6 @@ class FirebaseSignaling {
     return snap.exists;
   }
 
-  /// Set user online and keep them online across reconnects.
-  ///
-  /// Listens to `/.info/connected`. Every time Firebase reconnects (including
-  /// the initial connection and after any network interruption) it:
-  ///   1. Re-registers the onDisconnect guard (cleared on each disconnect).
-  ///   2. Writes online:true so the presence badge on other devices updates.
-  ///
-  /// This is the standard Firebase presence pattern — without it the user
-  /// stays offline:false after regaining network because the onDisconnect
-  /// handler fires once and is never re-registered.
-  Future<void> setUserOnline(String userId) async {
-    _connectedSub?.cancel();
-
-    _connectedSub = _db.child('.info/connected').onValue.listen((event) {
-      final connected = event.snapshot.value == true;
-      if (!connected) return; // wait for the reconnect event
-
-      final ref = _db.child('users/$userId');
-      // Must re-register onDisconnect on every new connection — the server
-      // discards the previous handler when the socket closes.
-      ref.onDisconnect().update({'online': false, 'onCall': false});
-      ref.update({'online': true});
-    });
-  }
-
-  /// Mark the local user as currently on a call (or not).
-  /// Re-registers the onDisconnect guard each time so it always reflects
-  /// the latest state even after multiple calls in one session.
-  Future<void> setUserOnCall(String userId, bool onCall) async {
-    final ref = _db.child('users/$userId');
-    // Keep the disconnect handler current.
-    ref.onDisconnect().update({'online': false, 'onCall': false});
-    await ref.child('onCall').set(onCall);
-  }
-
-  /// Returns true if the remote user is currently in a call.
-  Future<bool> isUserBusy(String userId) async {
-    final snap = await _db.child('users/$userId/onCall').get();
-    return snap.value == true;
-  }
-
-  /// Stream the live presence of a remote user.
-  /// Emits a map with keys: 'online' (bool) and 'onCall' (bool).
-  /// Cancel the returned subscription when the caller no longer needs it.
-  StreamSubscription listenForUserStatus(
-      String userId, void Function(bool online, bool onCall) callback) {
-    return _db.child('users/$userId').onValue.listen((event) {
-      final data = event.snapshot.value;
-      if (data == null) {
-        callback(false, false);
-        return;
-      }
-      final map = Map<String, dynamic>.from(data as Map);
-      final online = map['online'] == true;
-      final onCall = map['onCall'] == true;
-      callback(online, onCall);
-    });
-  }
-
   /// Write a busy signal to the caller's user node.
   /// Called by the callee when it receives an incoming call but is already in a call.
   Future<void> writeBusySignal(String callerId) async {
@@ -183,13 +122,11 @@ class FirebaseSignaling {
     });
   }
 
-  /// Cancel all active Firebase listeners, including the presence watcher.
+  /// Cancel all active Firebase listeners.
   Future<void> cancelListeners() async {
     for (final sub in _subs) {
       await sub.cancel();
     }
     _subs.clear();
-    await _connectedSub?.cancel();
-    _connectedSub = null;
   }
 }

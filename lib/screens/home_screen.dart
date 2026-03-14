@@ -17,154 +17,6 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-/// Colour-coded presence badge shown below the Remote User ID field.
-///
-/// [online] = null  → no ID typed yet (hidden, fades out)
-/// [online] = false → Offline  (grey, static dot)
-/// [online] = true, [onCall] = false → Online     (green, pulsing ring)
-/// [online] = true, [onCall] = true  → On another call (orange, pulsing ring)
-class _RemoteStatusBadge extends StatefulWidget {
-  const _RemoteStatusBadge({required this.online, required this.onCall});
-
-  final bool? online;
-  final bool onCall;
-
-  @override
-  State<_RemoteStatusBadge> createState() => _RemoteStatusBadgeState();
-}
-
-class _RemoteStatusBadgeState extends State<_RemoteStatusBadge>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse;
-  late final Animation<double> _ringScale;
-  late final Animation<double> _ringOpacity;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    );
-    _ringScale = Tween<double>(begin: 1.0, end: 2.4).animate(
-      CurvedAnimation(parent: _pulse, curve: Curves.easeOut),
-    );
-    _ringOpacity = Tween<double>(begin: 0.55, end: 0.0).animate(
-      CurvedAnimation(parent: _pulse, curve: Curves.easeOut),
-    );
-    _updatePulse();
-  }
-
-  @override
-  void didUpdateWidget(_RemoteStatusBadge old) {
-    super.didUpdateWidget(old);
-    if (old.online != widget.online || old.onCall != widget.onCall) {
-      _updatePulse();
-    }
-  }
-
-  /// Start pulsing when online (regardless of onCall), stop when offline/null.
-  void _updatePulse() {
-    final shouldPulse = widget.online == true;
-    if (shouldPulse) {
-      if (!_pulse.isAnimating) _pulse.repeat();
-    } else {
-      _pulse.stop();
-      _pulse.reset();
-    }
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Fade the whole badge in when visible, out when null.
-    return AnimatedOpacity(
-      opacity: widget.online == null ? 0.0 : 1.0,
-      duration: const Duration(milliseconds: 300),
-      child: _buildContent(),
-    );
-  }
-
-  Widget _buildContent() {
-    final Color dotColor;
-    final String label;
-
-    if (widget.online != true) {
-      dotColor = Colors.grey;
-      label = 'Offline';
-    } else if (widget.onCall) {
-      dotColor = Colors.orange;
-      label = 'On another call';
-    } else {
-      dotColor = Colors.green;
-      label = 'Online';
-    }
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Dot + expanding ring stacked in a fixed-size box.
-        SizedBox(
-          width: 20,
-          height: 20,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // Pulsing ring — only rendered when online.
-              if (widget.online == true)
-                AnimatedBuilder(
-                  animation: _pulse,
-                  builder: (_, __) => Transform.scale(
-                    scale: _ringScale.value,
-                    child: Opacity(
-                      opacity: _ringOpacity.value,
-                      child: Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: dotColor,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              // Solid dot — always present.
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  color: dotColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 8),
-        // Label cross-fades on state change.
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 250),
-          child: Text(
-            label,
-            key: ValueKey(label),
-            style: TextStyle(
-              fontSize: 13,
-              color: dotColor,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _HomeScreenState extends State<HomeScreen> {
   String _myUserId = '';
   final _remoteIdController = TextEditingController();
@@ -173,7 +25,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final _logService = CallLogService();
   StreamSubscription? _incomingCallSub;
   StreamSubscription? _statsSub;
-  StreamSubscription? _remoteStatusSub;
   bool _inCall = false;
   bool _isCallerRole = false;
 
@@ -181,10 +32,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Key used to call notifyRemoteDisconnected() on the active CallScreen.
   final _callScreenKey = GlobalKey<CallScreenState>();
-
-  // Live presence of the remote user shown in the dialer.
-  bool? _remoteOnline; // null = unknown (no ID typed yet)
-  bool _remoteOnCall = false;
 
   // Connection timeout — fires 30 s after _makeCall if the call never connects.
   Timer? _callTimeoutTimer;
@@ -223,39 +70,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _callMuted = savedMute;
     });
 
-    await _firebase.setUserOnline(_myUserId);
     _listenForIncomingCalls();
     await startForegroundService();
-
-    // Start watching whatever ID is already in the field (restored from prefs).
-    _remoteIdController.addListener(_onRemoteIdChanged);
-    _watchRemoteUser(_remoteIdController.text.trim());
-  }
-
-  /// Called every time the Remote User ID field changes.
-  void _onRemoteIdChanged() {
-    _watchRemoteUser(_remoteIdController.text.trim());
-  }
-
-  /// Cancel the current remote-status listener and start a new one for [id].
-  void _watchRemoteUser(String id) {
-    _remoteStatusSub?.cancel();
-    _remoteStatusSub = null;
-    if (id.isEmpty) {
-      setState(() {
-        _remoteOnline = null;
-        _remoteOnCall = false;
-      });
-      return;
-    }
-    _remoteStatusSub = _firebase.listenForUserStatus(id, (online, onCall) {
-      if (mounted) {
-        setState(() {
-          _remoteOnline = online;
-          _remoteOnCall = onCall;
-        });
-      }
-    });
   }
 
   void _listenForIncomingCalls() {
@@ -306,21 +122,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final remoteId = _remoteIdController.text.trim();
     if (remoteId.isEmpty) return;
 
-    // --- Busy check ---
-    final isBusy = await _firebase.isUserBusy(remoteId);
-    if (isBusy) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('$remoteId is currently on another call.'),
-            backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-      return;
-    }
-
     // Persist so it auto-populates next time
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lastRemoteIdKey, remoteId);
@@ -340,7 +141,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _inCall = true;
     _isCallerRole = true;
     setState(() {});
-    await _firebase.setUserOnCall(_myUserId, true);
 
     // Notify CallScreen when the remote side drops (WebRTC layer).
     _webrtc.onConnectionLost = _onRemoteDisconnected;
@@ -430,8 +230,6 @@ class _HomeScreenState extends State<HomeScreen> {
     // Create and write answer
     final answer = await _webrtc.createAnswer();
     await _firebase.writeAnswer(callId: callId, answer: answer);
-    // Mark callee as on-call so other callers see "busy".
-    await _firebase.setUserOnCall(_myUserId, true);
     await updateForegroundNotification('In call...');
 
     // Listen for remote ICE candidates (from caller)
@@ -488,8 +286,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _callTimeoutTimer = null;
     _callConnected = false;
     await _finaliseLog();
-    // Clear busy flag — clean path exit.
-    await _firebase.setUserOnCall(_myUserId, false);
     await _firebase.cancelListeners();
     await _webrtc.close();
     if (_isCallerRole) {
@@ -508,8 +304,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _callTimeoutTimer = null;
     _callConnected = false;
     await _finaliseLog();
-    // Clear busy flag — clean path exit.
-    await _firebase.setUserOnCall(_myUserId, false);
     await _firebase.cancelListeners();
     await _webrtc.close();
     await AudioService.releaseProximityWakeLock();
@@ -524,10 +318,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _callTimeoutTimer?.cancel();
-    _remoteIdController.removeListener(_onRemoteIdChanged);
     _incomingCallSub?.cancel();
     _statsSub?.cancel();
-    _remoteStatusSub?.cancel();
     _firebase.cancelListeners();
     _webrtc.close();
     super.dispose();
@@ -590,11 +382,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 8),
-            _RemoteStatusBadge(
-              online: _remoteOnline,
-              onCall: _remoteOnCall,
-            ),
             const SizedBox(height: 16),
             const Text('TURN Server',
                 style: TextStyle(fontSize: 14, color: Colors.grey)),
@@ -626,9 +413,7 @@ class _HomeScreenState extends State<HomeScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                // Disable only if no ID typed or remote user is busy.
-                onPressed: (!_remoteOnCall &&
-                        _remoteIdController.text.trim().isNotEmpty)
+                onPressed: _remoteIdController.text.trim().isNotEmpty
                     ? _makeCall
                     : null,
                 child: const Text('Call'),
