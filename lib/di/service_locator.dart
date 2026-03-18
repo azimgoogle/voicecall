@@ -1,11 +1,15 @@
 import 'package:get_it/get_it.dart';
 
+import '../interfaces/audio_service.dart';
 import '../interfaces/call_log_repository.dart';
+import '../interfaces/foreground_service.dart';
 import '../interfaces/peer_connection_service.dart';
 import '../interfaces/settings_repository.dart';
 import '../interfaces/signaling_service.dart';
+import '../services/audio_service.dart';
 import '../services/call_log_service.dart';
 import '../services/firebase_signaling.dart';
+import '../services/foreground_service.dart';
 import '../services/settings_service.dart';
 import '../services/webrtc_service.dart';
 import '../viewmodels/home_view_model.dart';
@@ -25,6 +29,8 @@ void setupServiceLocator() {
   sl.registerLazySingleton<PeerConnectionService>(() => WebRtcService());
   sl.registerLazySingleton<CallLogRepository>(() => CallLogService());
   sl.registerLazySingleton<SettingsRepository>(() => SettingsService());
+  sl.registerLazySingleton<AudioService>(() => PlatformAudioService());
+  sl.registerLazySingleton<ForegroundService>(() => ForegroundServiceImpl());
 
   // ViewModel: factory so each HomeScreen mount gets a fresh instance,
   // while still receiving the singleton services it depends on.
@@ -33,5 +39,7 @@ void setupServiceLocator() {
         peerConnection: sl<PeerConnectionService>(),
         logRepository: sl<CallLogRepository>(),
         settings: sl<SettingsRepository>(),
+        audioService: sl<AudioService>(),
+        foregroundService: sl<ForegroundService>(),
       ));
 }

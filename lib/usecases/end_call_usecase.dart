@@ -1,11 +1,11 @@
 import '../core/app_error.dart';
 import '../core/result.dart';
+import '../interfaces/audio_service.dart';
 import '../interfaces/call_log_repository.dart';
+import '../interfaces/foreground_service.dart';
 import '../interfaces/peer_connection_service.dart';
 import '../interfaces/signaling_service.dart';
 import '../models/call_log_entry.dart';
-import '../services/audio_service.dart';
-import '../services/foreground_service.dart';
 
 /// Encapsulates all cleanup logic for ending a call.
 ///
@@ -16,14 +16,20 @@ class EndCallUseCase {
   final SignalingService _signaling;
   final PeerConnectionService _peerConnection;
   final CallLogRepository _logRepository;
+  final AudioService _audio;
+  final ForegroundService _foreground;
 
   EndCallUseCase({
     required SignalingService signaling,
     required PeerConnectionService peerConnection,
     required CallLogRepository logRepository,
+    required AudioService audioService,
+    required ForegroundService foregroundService,
   })  : _signaling = signaling,
         _peerConnection = peerConnection,
-        _logRepository = logRepository;
+        _logRepository = logRepository,
+        _audio = audioService,
+        _foreground = foregroundService;
 
   /// Tears down an active call.
   ///
@@ -62,12 +68,12 @@ class EndCallUseCase {
 
       // 5. Release audio resources (caller only).
       if (releaseAudio) {
-        await AudioService.releaseProximityWakeLock();
-        await AudioService.stopAudioSession();
+        await _audio.releaseProximityWakeLock();
+        await _audio.stopAudioSession();
       }
 
       // 6. Reset foreground notification to idle state.
-      await updateForegroundNotification('Waiting for calls...');
+      await _foreground.updateNotification('Waiting for calls...');
 
       return const Ok(Unit.instance);
     } catch (e) {

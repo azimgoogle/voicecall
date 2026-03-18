@@ -1,5 +1,7 @@
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
+import '../interfaces/foreground_service.dart';
+
 /// Initialize foreground task configuration. Call once in main().
 void initForegroundService() {
   FlutterForegroundTask.initCommunicationPort();
@@ -61,6 +63,34 @@ Future<void> updateForegroundNotification(
 /// Stop the foreground service entirely.
 Future<void> stopForegroundService() async {
   await FlutterForegroundTask.stopService();
+}
+
+// ── ForegroundService implementation ─────────────────────────────────────────
+
+/// Concrete [ForegroundService] implementation backed by [FlutterForegroundTask].
+///
+/// Register as a singleton in the DI container so use-cases and view-models
+/// can depend on the [ForegroundService] interface without knowing the plugin.
+class ForegroundServiceImpl implements ForegroundService {
+  @override
+  Future<void> start() => startForegroundService();
+
+  @override
+  Future<void> updateNotification(
+    String text, {
+    bool showEndCall = false,
+    bool showMute = false,
+    bool isMuted = false,
+  }) =>
+      updateForegroundNotification(
+        text,
+        showEndCall: showEndCall,
+        showMute: showMute,
+        isMuted: isMuted,
+      );
+
+  @override
+  Future<void> stop() => stopForegroundService();
 }
 
 // ── TaskHandler + callback ──────────────────────────────────────

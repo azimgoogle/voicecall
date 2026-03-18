@@ -4,13 +4,14 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/result.dart';
+import '../interfaces/audio_service.dart';
 import '../interfaces/call_log_repository.dart';
+import '../interfaces/foreground_service.dart';
 import '../interfaces/peer_connection_service.dart';
 import '../interfaces/settings_repository.dart';
 import '../interfaces/signaling_service.dart';
 import '../models/call_log_entry.dart';
 import '../models/call_state.dart';
-import '../services/foreground_service.dart';
 import '../usecases/answer_call_usecase.dart';
 import '../usecases/end_call_usecase.dart';
 import '../usecases/make_call_usecase.dart';
@@ -45,6 +46,7 @@ class HomeViewModel {
   final SignalingService _signaling;
   final PeerConnectionService _peerConnection;
   final SettingsRepository _settings;
+  final ForegroundService _foreground;
 
   late final MakeCallUseCase _makeCall;
   late final AnswerCallUseCase _answerCall;
@@ -55,23 +57,31 @@ class HomeViewModel {
     required PeerConnectionService peerConnection,
     required CallLogRepository logRepository,
     required SettingsRepository settings,
+    required AudioService audioService,
+    required ForegroundService foregroundService,
   })  : _signaling = signaling,
         _peerConnection = peerConnection,
-        _settings = settings {
+        _settings = settings,
+        _foreground = foregroundService {
     _makeCall = MakeCallUseCase(
       signaling: signaling,
       peerConnection: peerConnection,
       logRepository: logRepository,
+      audioService: audioService,
+      foregroundService: foregroundService,
     );
     _answerCall = AnswerCallUseCase(
       signaling: signaling,
       peerConnection: peerConnection,
       logRepository: logRepository,
+      foregroundService: foregroundService,
     );
     _endCall = EndCallUseCase(
       signaling: signaling,
       peerConnection: peerConnection,
       logRepository: logRepository,
+      audioService: audioService,
+      foregroundService: foregroundService,
     );
   }
 
@@ -123,7 +133,7 @@ class HomeViewModel {
     _defaultVolume = prefs.getDouble(_callVolumeKey) ?? 1.0;
 
     _listenForIncomingCalls();
-    await startForegroundService();
+    await _foreground.start();
   }
 
   /// Returns the last-dialled remote ID from SharedPreferences.
@@ -248,7 +258,7 @@ class HomeViewModel {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('call_mute', muted);
     await _peerConnection.setRemoteVolume(muted ? 0.0 : current.volume);
-    await updateForegroundNotification(
+    await _foreground.updateNotification(
       'In call...',
       showEndCall: true,
       showMute: true,

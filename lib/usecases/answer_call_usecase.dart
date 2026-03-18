@@ -1,24 +1,27 @@
 import '../core/app_error.dart';
 import '../core/result.dart';
 import '../interfaces/call_log_repository.dart';
+import '../interfaces/foreground_service.dart';
 import '../interfaces/peer_connection_service.dart';
 import '../interfaces/signaling_service.dart';
 import '../models/call_log_entry.dart';
-import '../services/foreground_service.dart';
 
 /// Encapsulates all logic for answering an incoming call.
 class AnswerCallUseCase {
   final SignalingService _signaling;
   final PeerConnectionService _peerConnection;
   final CallLogRepository _logRepository;
+  final ForegroundService _foreground;
 
   AnswerCallUseCase({
     required SignalingService signaling,
     required PeerConnectionService peerConnection,
     required CallLogRepository logRepository,
+    required ForegroundService foregroundService,
   })  : _signaling = signaling,
         _peerConnection = peerConnection,
-        _logRepository = logRepository;
+        _logRepository = logRepository,
+        _foreground = foregroundService;
 
   /// Answers the call identified by [callId].
   ///
@@ -56,7 +59,7 @@ class AnswerCallUseCase {
 
       final answer = await _peerConnection.createAnswer();
       await _signaling.writeAnswer(callId: callId, answer: answer);
-      await updateForegroundNotification('In call...', showEndCall: true);
+      await _foreground.updateNotification('In call...', showEndCall: true);
 
       _signaling.listenForIceCandidates(callId, true, (candidate) {
         _peerConnection.addIceCandidate(candidate);

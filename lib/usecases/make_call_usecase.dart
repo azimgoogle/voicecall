@@ -2,29 +2,35 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_error.dart';
 import '../core/result.dart';
+import '../interfaces/audio_service.dart';
 import '../interfaces/call_log_repository.dart';
+import '../interfaces/foreground_service.dart';
 import '../interfaces/peer_connection_service.dart';
 import '../interfaces/signaling_service.dart';
 import '../models/call_log_entry.dart';
-import '../services/audio_service.dart';
-import '../services/foreground_service.dart';
 
 /// Encapsulates all logic for initiating an outgoing call.
 ///
 /// Dependencies are injected so the use case can be unit-tested in isolation
-/// without a real Firebase or WebRTC implementation.
+/// without a real Firebase, WebRTC, or platform-audio implementation.
 class MakeCallUseCase {
   final SignalingService _signaling;
   final PeerConnectionService _peerConnection;
   final CallLogRepository _logRepository;
+  final AudioService _audio;
+  final ForegroundService _foreground;
 
   MakeCallUseCase({
     required SignalingService signaling,
     required PeerConnectionService peerConnection,
     required CallLogRepository logRepository,
+    required AudioService audioService,
+    required ForegroundService foregroundService,
   })  : _signaling = signaling,
         _peerConnection = peerConnection,
-        _logRepository = logRepository;
+        _logRepository = logRepository,
+        _audio = audioService,
+        _foreground = foregroundService;
 
   static const String _lastRemoteIdKey = 'last_remote_id';
   static const String _callMuteKey = 'call_mute';
@@ -61,8 +67,8 @@ class MakeCallUseCase {
 
       await _peerConnection.init(isCaller: true, turnServer: turnServer);
       await _peerConnection.setRemoteVolume(initialVolume);
-      await AudioService.startAudioSession();
-      await AudioService.acquireProximityWakeLock();
+      await _audio.startAudioSession();
+      await _audio.acquireProximityWakeLock();
 
       await _logRepository.saveEntry(logEntry);
 
@@ -75,7 +81,7 @@ class MakeCallUseCase {
       await _signaling.writeOffer(
           callId: callId, offer: offer, caller: callerId, callee: remoteId);
       await _signaling.notifyRemoteUser(remoteId, callId);
-      await updateForegroundNotification(
+      await _foreground.updateNotification(
         'In call...',
         showEndCall: true,
         showMute: true,
