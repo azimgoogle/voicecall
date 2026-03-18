@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../services/firebase_signaling.dart';
+import '../di/service_locator.dart';
+import '../interfaces/signaling_service.dart';
 import 'home_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -13,7 +14,7 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   final _controller = TextEditingController();
-  final _firebase = FirebaseSignaling();
+  final _firebase = sl<SignalingService>();
 
   bool _checking = false;
   String? _errorText;

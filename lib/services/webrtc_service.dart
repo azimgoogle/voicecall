@@ -4,7 +4,16 @@ import 'dart:convert';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 
-class WebRtcService {
+import '../interfaces/peer_connection_service.dart';
+import '../models/ice_candidate_model.dart';
+import '../models/session_description.dart';
+
+/// flutter_webrtc implementation of [PeerConnectionService].
+///
+/// All WebRTC library types (RTCSessionDescription, RTCIceCandidate, etc.)
+/// are fully contained here. Callers only see domain models, so this class
+/// can be swapped for a different media stack without touching any other file.
+class WebRtcService implements PeerConnectionService {
   RTCPeerConnection? _pc;
   MediaStream? _localStream;
   Timer? _statsTimer;
@@ -17,23 +26,34 @@ class WebRtcService {
   /// Volume to apply as soon as the remote track arrives (0.0–1.0).
   double? _pendingVolume;
 
-  /// Fired once when the peer connection permanently fails or disconnects.
-  /// Only the first terminal state triggers this — subsequent state changes
-  /// are ignored. Caller sets this before [init].
+  // ── PeerConnectionService: connection event hooks ─────────────────────────
+
+  @override
   void Function()? onConnectionLost;
 
-  /// Fired when the peer connection reaches the 'connected' state.
+  @override
   void Function()? onConnectionEstablished;
 
-  /// Stream of live stats: `{bytesSent: int, bytesReceived: int}`.
-  /// Emits every second while the call is active.
+  @override
+  set onIceCandidate(void Function(IceCandidateModel candidate) callback) {
+    _pc!.onIceCandidate = (RTCIceCandidate c) {
+      callback(IceCandidateModel(
+        candidate: c.candidate ?? '',
+        sdpMid: c.sdpMid,
+        sdpMLineIndex: c.sdpMLineIndex,
+      ));
+    };
+  }
+
+  @override
   Stream<Map<String, dynamic>> get statsStream => _statsController.stream;
+
+  // ── TURN / ICE server config ───────────────────────────────────────────────
 
   static const String _meteredApiKey = '21601028951dce7b0c1a015657dd0a3ce67d';
   static const String _meteredApiUrl =
       'https://voicecallpoc.metered.live/api/v1/turn/credentials?apiKey=$_meteredApiKey';
 
-  /// ExpressTURN static credentials (free tier — refreshed manually from dashboard).
   static const List<Map<String, dynamic>> _expressTurnServers = [
     {
       'urls': 'turn:free.expressturn.com:3478',
@@ -52,21 +72,13 @@ class WebRtcService {
     },
   ];
 
-  /// Fetch ICE servers based on the selected TURN provider.
-  ///
-  /// [turnServer] options:
-  ///   - 'metered'     → Metered.ca only (dynamic credentials fetched via API)
-  ///   - 'expressturn' → ExpressTURN only (static credentials, no HTTP fetch)
-  ///   - 'both'        → Metered + ExpressTURN merged (used by callee)
   Future<List<Map<String, dynamic>>> _fetchIceServers({
     String turnServer = 'both',
   }) async {
     if (turnServer == 'expressturn') {
-      // Static credentials — no network call needed
       return [..._stunServers, ..._expressTurnServers];
     }
 
-    // For 'metered' or 'both', fetch dynamic Metered credentials
     try {
       final response = await http
           .get(Uri.parse(_meteredApiUrl))
@@ -77,31 +89,26 @@ class WebRtcService {
         final meteredServers = data.cast<Map<String, dynamic>>();
 
         if (turnServer == 'metered') {
-          return meteredServers; // Metered only (includes their STUN entries)
+          return meteredServers;
         }
-        // 'both': merge Metered + ExpressTURN
         return [...meteredServers, ..._expressTurnServers];
       }
     } catch (_) {
       // Network error or timeout — fall through to fallback
     }
 
-    // Fallback when Metered fetch fails
     if (turnServer == 'metered') {
-      // Nothing we can do without credentials — STUN only
       return _stunServers;
     }
-    // 'both' fallback: at least use ExpressTURN + STUN
     return [..._stunServers, ..._expressTurnServers];
   }
 
-  /// Create peer connection and acquire audio-only local stream.
-  ///
+  // ── PeerConnectionService: lifecycle ──────────────────────────────────────
+
   /// One-way audio (callee → caller):
-  ///   - Caller: mic OFF (muted), listens to remote audio from callee
-  ///   - Callee: mic ON (sends audio), ignores remote audio from caller
-  ///
-  /// [turnServer]: 'metered' | 'expressturn' | 'both'
+  ///   - Caller: mic OFF, listens to remote audio from callee
+  ///   - Callee: mic ON, ignores remote audio from caller
+  @override
   Future<void> init({bool isCaller = false, String turnServer = 'both'}) async {
     final iceServers = await _fetchIceServers(turnServer: turnServer);
 
@@ -112,18 +119,17 @@ class WebRtcService {
 
     _pc = await createPeerConnection(rtcConfig);
 
-    // Monitor connection health. 'disconnected' can self-recover; 'failed'
-    // and 'closed' are terminal. Fire onConnectionLost only once.
-    bool _connectionLostFired = false;
+    bool connectionLostFired = false;
     _pc!.onConnectionState = (RTCPeerConnectionState state) {
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         onConnectionEstablished?.call();
       }
-      if (_connectionLostFired) return;
+      if (connectionLostFired) return;
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateClosed ||
-          state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
-        _connectionLostFired = true;
+          state ==
+              RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+        connectionLostFired = true;
         onConnectionLost?.call();
       }
     };
@@ -133,7 +139,6 @@ class WebRtcService {
       'video': false,
     });
 
-    // Caller: mute mic — caller only listens, never sends audio
     if (isCaller) {
       for (final track in _localStream!.getAudioTracks()) {
         track.enabled = false;
@@ -145,8 +150,6 @@ class WebRtcService {
     }
 
     if (isCaller) {
-      // Caller: capture the remote audio track so volume can be adjusted.
-      // WebRTC plays it automatically; we just need a handle for Helper.setVolume.
       _pc!.onTrack = (event) {
         if (event.track.kind == 'audio') {
           _remoteAudioTrack = event.track;
@@ -157,14 +160,121 @@ class WebRtcService {
         }
       };
     } else {
-      // Callee: discard incoming remote audio — callee never hears caller
       _pc!.onTrack = (event) {
-        // Discard remote tracks — callee doesn't play any audio
+        // Callee discards incoming audio — one-way design
       };
     }
 
     _startStatsPolling();
   }
+
+  @override
+  Future<void> close() async {
+    onConnectionLost = null;
+    onConnectionEstablished = null;
+    _statsTimer?.cancel();
+    _statsTimer = null;
+    _localStream?.getTracks().forEach((t) => t.stop());
+    _localStream?.dispose();
+    _localStream = null;
+    await _pc?.close();
+    _pc = null;
+    _remoteAudioTrack = null;
+    _pendingVolume = null;
+  }
+
+  // ── PeerConnectionService: negotiation ────────────────────────────────────
+
+  @override
+  Future<SessionDescription> createOffer() async {
+    final offer = await _pc!.createOffer();
+    await _pc!.setLocalDescription(offer);
+    return SessionDescription(sdp: offer.sdp!, type: offer.type!);
+  }
+
+  @override
+  Future<SessionDescription> createAnswer() async {
+    final answer = await _pc!.createAnswer();
+    await _pc!.setLocalDescription(answer);
+    return SessionDescription(sdp: answer.sdp!, type: answer.type!);
+  }
+
+  @override
+  Future<void> setRemoteDescription(SessionDescription description) async {
+    await _pc!.setRemoteDescription(
+      RTCSessionDescription(description.sdp, description.type),
+    );
+  }
+
+  @override
+  Future<void> addIceCandidate(IceCandidateModel candidate) async {
+    await _pc?.addCandidate(RTCIceCandidate(
+      candidate.candidate,
+      candidate.sdpMid,
+      candidate.sdpMLineIndex,
+    ));
+  }
+
+  // ── PeerConnectionService: audio control ──────────────────────────────────
+
+  @override
+  Future<void> setRemoteVolume(double volume) async {
+    _pendingVolume = volume;
+    final track = _remoteAudioTrack;
+    if (track != null) {
+      await Helper.setVolume(volume, track);
+    }
+  }
+
+  @override
+  Future<String> resolveActualTurnUsed() async {
+    if (_pc == null) return 'unknown';
+    try {
+      final reports = await _pc!.getStats();
+
+      String? localCandidateId;
+      for (final r in reports) {
+        if (r.type == 'candidate-pair') {
+          final state = r.values['state'] as String? ?? '';
+          final nominated = r.values['nominated'] as bool? ?? false;
+          if (state == 'succeeded' || nominated) {
+            localCandidateId = r.values['localCandidateId'] as String?;
+            break;
+          }
+        }
+      }
+
+      if (localCandidateId == null) return 'unknown';
+
+      for (final r in reports) {
+        if (r.type == 'local-candidate' && r.id == localCandidateId) {
+          final candidateType = r.values['candidateType'] as String? ?? '';
+          if (candidateType != 'relay') {
+            return candidateType == 'host' ? 'direct' : 'stun';
+          }
+          final ip = (r.values['ip'] ??
+                  r.values['address'] ??
+                  r.values['relatedAddress'] ??
+                  '') as String;
+          final url = r.values['url'] as String? ?? '';
+          final combined = '$ip $url'.toLowerCase();
+          if (combined.contains('metered') ||
+              combined.contains('openrelay')) {
+            return 'metered';
+          }
+          if (combined.contains('expressturn')) {
+            return 'expressturn';
+          }
+          return 'turn';
+        }
+      }
+    } catch (_) {
+      // getStats() failed — not critical
+    }
+    return 'unknown';
+  }
+
+  // ── Private ───────────────────────────────────────────────────────────────
 
   void _startStatsPolling() {
     _statsTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
@@ -187,122 +297,5 @@ class WebRtcService {
         });
       }
     });
-  }
-
-  /// Create SDP offer.
-  Future<RTCSessionDescription> createOffer() async {
-    final offer = await _pc!.createOffer();
-    await _pc!.setLocalDescription(offer);
-    return offer;
-  }
-
-  /// Create SDP answer.
-  Future<RTCSessionDescription> createAnswer() async {
-    final answer = await _pc!.createAnswer();
-    await _pc!.setLocalDescription(answer);
-    return answer;
-  }
-
-  /// Set remote SDP description.
-  Future<void> setRemoteDescription(String sdp, String type) async {
-    await _pc!.setRemoteDescription(RTCSessionDescription(sdp, type));
-  }
-
-  /// Add a remote ICE candidate.
-  Future<void> addIceCandidate(
-      String candidate, String? sdpMid, int? sdpMLineIndex) async {
-    await _pc?.addCandidate(
-        RTCIceCandidate(candidate, sdpMid, sdpMLineIndex));
-  }
-
-  /// Set callback for local ICE candidates.
-  set onIceCandidate(void Function(RTCIceCandidate candidate) callback) {
-    _pc!.onIceCandidate = callback;
-  }
-
-  /// Inspect the active ICE candidate pair to determine what relay was actually
-  /// used for this call. Returns one of:
-  ///   'direct'      — host-to-host, no server involved
-  ///   'stun'        — server-reflexive (STUN helped, no relay)
-  ///   'metered'     — relayed via Metered TURN (*.metered.live / openrelay)
-  ///   'expressturn' — relayed via ExpressTURN (*.expressturn.com)
-  ///   'turn'        — relayed via an unrecognised TURN server
-  ///   'unknown'     — stats not available or no active pair found
-  Future<String> resolveActualTurnUsed() async {
-    if (_pc == null) return 'unknown';
-    try {
-      final reports = await _pc!.getStats();
-
-      // Find the succeeded candidate-pair
-      String? localCandidateId;
-      for (final r in reports) {
-        if (r.type == 'candidate-pair') {
-          final state = r.values['state'] as String? ?? '';
-          final nominated = r.values['nominated'] as bool? ?? false;
-          if (state == 'succeeded' || nominated) {
-            localCandidateId =
-                r.values['localCandidateId'] as String?;
-            break;
-          }
-        }
-      }
-
-      if (localCandidateId == null) return 'unknown';
-
-      // Look up the local candidate for that pair
-      for (final r in reports) {
-        if (r.type == 'local-candidate' && r.id == localCandidateId) {
-          final candidateType = r.values['candidateType'] as String? ?? '';
-          if (candidateType != 'relay') {
-            return candidateType == 'host' ? 'direct' : 'stun';
-          }
-          // It's a relay — figure out which TURN server
-          final ip = (r.values['ip'] ??
-                  r.values['address'] ??
-                  r.values['relatedAddress'] ??
-                  '') as String;
-          final url = r.values['url'] as String? ?? '';
-          final combined = '$ip $url'.toLowerCase();
-          if (combined.contains('metered') ||
-              combined.contains('openrelay')) {
-            return 'metered';
-          }
-          if (combined.contains('expressturn')) {
-            return 'expressturn';
-          }
-          return 'turn'; // relay via an unrecognised server
-        }
-      }
-    } catch (_) {
-      // getStats() failed — not critical
-    }
-    return 'unknown';
-  }
-
-  /// Set the receive-side volume for the caller (0.0 = silent, 1.0 = full).
-  /// Uses WebRTC's internal AudioTrack gain — no system volume change.
-  /// Safe to call before the remote track has arrived; value is applied
-  /// immediately once the track is received.
-  Future<void> setRemoteVolume(double volume) async {
-    _pendingVolume = volume;
-    final track = _remoteAudioTrack;
-    if (track != null) {
-      await Helper.setVolume(volume, track);
-    }
-  }
-
-  /// Close peer connection and release media resources.
-  Future<void> close() async {
-    onConnectionLost = null; // prevent stale callbacks after teardown
-    onConnectionEstablished = null;
-    _statsTimer?.cancel();
-    _statsTimer = null;
-    _localStream?.getTracks().forEach((t) => t.stop());
-    _localStream?.dispose();
-    _localStream = null;
-    await _pc?.close();
-    _pc = null;
-    _remoteAudioTrack = null;
-    _pendingVolume = null;
   }
 }

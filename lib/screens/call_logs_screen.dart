@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../di/service_locator.dart';
-import '../services/call_log_service.dart';
+import '../interfaces/call_log_repository.dart';
+import '../models/call_log_entry.dart';
 
 class CallLogsScreen extends StatefulWidget {
   const CallLogsScreen({super.key});
@@ -11,7 +12,7 @@ class CallLogsScreen extends StatefulWidget {
 }
 
 class _CallLogsScreenState extends State<CallLogsScreen> {
-  final _service = sl<CallLogService>();
+  final _service = sl<CallLogRepository>();
   List<CallLogEntry> _logs = [];
   bool _loading = true;
 

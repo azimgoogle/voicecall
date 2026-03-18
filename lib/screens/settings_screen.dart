@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../di/service_locator.dart';
-import '../services/call_log_service.dart';
-import '../services/settings_service.dart';
+import '../interfaces/call_log_repository.dart';
+import '../interfaces/settings_repository.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -12,10 +12,10 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _settings = sl<SettingsService>();
-  final _logService = sl<CallLogService>();
+  final _settings = sl<SettingsRepository>();
+  final _logService = sl<CallLogRepository>();
 
-  int _retentionDays = SettingsService.defaultRetentionDays;
+  int _retentionDays = SettingsRepository.defaultRetentionDays;
   List<String> _whitelist = [];
 
   /// Unique remote user IDs from recent call logs not already in the whitelist.
