@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../di/service_locator.dart';
 import '../services/call_log_service.dart';
 import '../services/settings_service.dart';
 
@@ -11,8 +12,8 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _settings = SettingsService();
-  final _logService = CallLogService();
+  final _settings = sl<SettingsService>();
+  final _logService = sl<CallLogService>();
 
   int _retentionDays = SettingsService.defaultRetentionDays;
   List<String> _whitelist = [];

@@ -4,6 +4,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../di/service_locator.dart';
 import '../services/audio_service.dart';
 import '../services/call_log_service.dart';
 import '../services/firebase_signaling.dart';
@@ -23,10 +24,10 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String _myUserId = '';
   final _remoteIdController = TextEditingController();
-  final _firebase = FirebaseSignaling();
-  final _webrtc = WebRtcService();
-  final _logService = CallLogService();
-  final _settingsService = SettingsService();
+  final _firebase = sl<FirebaseSignaling>();
+  final _webrtc = sl<WebRtcService>();
+  final _logService = sl<CallLogService>();
+  final _settingsService = sl<SettingsService>();
   StreamSubscription? _incomingCallSub;
   StreamSubscription? _statsSub;
   StreamSubscription? _incomingCallCancelSub;
