@@ -13,98 +13,137 @@ Production 1-to-1 audio calling app for families. WebRTC for audio, Firebase Rea
 - `permission_handler: ^11.4.0` — runtime microphone permission
 - `flutter_foreground_task: ^9.2.0` — Android foreground service (keeps process alive)
 - `http: ^1.2.2` — fetch Metered TURN credentials
+- `get_it` — dependency injection (service locator)
 - STUN: `stun:stun.l.google.com:19302` (+ stun1, stun2)
 - TURN: Metered.ca (dynamic credentials via API) + ExpressTURN (static fallback)
 - Min SDK: 24
 
 ## Architecture
 
+The codebase follows **Ports & Adapters (Hexagonal Architecture)** with **MVVM**:
+
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  HomeScreen (screens/home_screen.dart)                       │
-│  - Loads/persists userId (guaranteed by OnboardingScreen)    │
-│  - Orchestrates call setup, teardown, and state              │
-│  - Listens: /users/{myId}/incomingCall                       │
-│    → auto-answer if callerId is whitelisted                  │
-│    → show Answer button (40s timeout) otherwise              │
-│  - Delegates to CallScreen when _inCall = true               │
-│  - Handles: busy signal, call timeout (30s), mute state      │
-│  - Tracks call logs + stats (bytesSent/Received)             │
-└───────────┬─────────────────────────┬────────────────────────┘
-            │ uses                    │ uses
-┌───────────▼───────────┐ ┌──────────▼───────────────────────┐
-│  FirebaseSignaling    │ │  WebRtcService                   │
-│  (services/           │ │  (services/webrtc_service.dart)  │
-│  firebase_signaling   │ │                                  │
-│  .dart)               │ │  - init(isCaller, turnServer)    │
-│                       │ │  - createOffer / createAnswer    │
-│  - writeOffer/Answer  │ │  - setRemoteDescription          │
-│  - writeIceCandidate  │ │  - addIceCandidate               │
-│  - notifyRemoteUser   │ │  - setRemoteVolume(0.0–1.0)      │
-│  - listenForAnswer    │ │  - resolveActualTurnUsed()       │
-│  - listenForICE       │ │  - statsStream (1 Hz)            │
-│  - listenForIncoming  │ │  - onConnectionLost/Established  │
-│  - writeBusySignal    │ │  - close()                       │
-│  - writeCancelled     │ └──────────────────────────────────┘
-│  - listenForCancelled │
-│  - isUserIdTaken      │ ┌──────────────────────────────────┐
-│  - cancelListeners    │ │  CallScreen                      │
-└───────────────────────┘ │  (screens/call_screen.dart)      │
-                          │  - Elapsed timer (caller)        │
-                          │  - Data usage stats (caller)     │
-                          │  - Volume slider (caller)        │
-                          │  - Mute/Unmute button            │
-                          │  - End Call button (caller)      │
-                          │  - "Waiting…" label (callee)     │
-                          │  - Remote disconnect banner      │
-                          └──────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────┐
-│  ForegroundService (services/foreground_service.dart)        │
-│  - Persistent notification: "Waiting for calls…"            │
-│  - In-call notification: "In call…" + buttons               │
-│  - Notification buttons: End Call (both), Mute/Unmute(caller)│
-│  - Forwards button taps → main isolate via sendDataToMain    │
-└──────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────┐
-│  AudioService (services/audio_service.dart)                  │
-│  - MODE_IN_COMMUNICATION, audio focus                        │
-│  - Proximity wake lock (screen off when phone at ear)        │
-│  - Earpiece/speaker routing based on proximity               │
-└──────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────┐
-│  Supporting Services                                         │
-│  CallLogService  — persist/query call history (SharedPrefs)  │
-│  SettingsService — call log retention, auto-answer whitelist │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  AppBootstrapper (core/app_bootstrapper.dart)                        │
+│  - Firebase init, DI setup, foreground channel, userId check        │
+│  Called once from main() before runApp()                            │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ boot() → hasUserId
+┌──────────────────────────────▼──────────────────────────────────────┐
+│  HomeScreen (screens/home_screen.dart)                               │
+│  - Pure StreamBuilder observer: CallState + HomeEvent               │
+│  - No call logic; forwards user taps to HomeViewModel               │
+│  - Delegates to CallScreen when state is ActiveCall                 │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ observes / calls
+┌──────────────────────────────▼──────────────────────────────────────┐
+│  HomeViewModel (viewmodels/home_view_model.dart)                     │
+│  - Owns all call-lifecycle state via Stream<CallState>              │
+│  - Emits one-shot HomeEvent (calleeBusy, timeout, disconnected, …)  │
+│  - Subscribes to PeerConnectionService streams after each call:     │
+│      connectionLost / connectionEstablished / iceCandidate          │
+│  - Subscribes to SignalingService streams: busySignal / incomingCall│
+│  - Manages timers: 30s call-connect timeout, 40s incoming timeout   │
+│  - Delegates I/O to the three use cases below                       │
+└────┬──────────────────────┬────────────────────────┬────────────────┘
+     │                      │                        │
+┌────▼────────────┐  ┌──────▼─────────────┐  ┌──────▼──────────────┐
+│ MakeCallUseCase │  │ AnswerCallUseCase   │  │  EndCallUseCase     │
+│ (usecases/)     │  │ (usecases/)         │  │  (usecases/)        │
+│ Returns         │  │ Returns             │  │  Returns            │
+│ Result<         │  │ Result<             │  │  Result<Unit,       │
+│   CallLogEntry, │  │   CallLogEntry,     │  │    AppError>        │
+│   AppError>     │  │   AppError>         │  │                     │
+└────┬────────────┘  └──────┬─────────────┘  └──────┬──────────────┘
+     │                      │                        │
+     └──────────────────────┴────────────────────────┘
+                            │ inject / call
+          ┌─────────────────┴──────────────────┐
+          │         Abstract Interfaces         │
+          │  (lib/interfaces/)                  │
+          │  PeerConnectionService              │
+          │  SignalingService                   │
+          │  AudioService                       │
+          │  ForegroundService                  │
+          │  CallLogRepository                  │
+          │  SettingsRepository                 │
+          └─────────────────┬──────────────────┘
+                            │ implemented by
+          ┌─────────────────┴──────────────────┐
+          │         Concrete Adapters           │
+          │  WebRtcService                      │
+          │  FirebaseSignaling                  │
+          │  PlatformAudioService               │
+          │  ForegroundServiceImpl              │
+          │  CallLogService (+ in-memory cache) │
+          │  SettingsService                    │
+          └─────────────────────────────────────┘
 ```
+
+### Stream-based event API
+
+All async events use Dart `Stream`s — no mutable callback properties:
+
+- **`PeerConnectionService`** exposes `connectionLost`, `connectionEstablished`, and `iceCandidate` as per-call broadcast streams. Controllers are created in `init()` and **closed** in `close()`, so subscribers automatically receive a done event at teardown.
+- **`SignalingService`** exposes `iceCandidates()`, `answerStream()`, and `busySignal()` as call-scoped streams (backed by StreamControllers closed by `cancelListeners()`), and `incomingCall()` / `callCancelled()` as direct Firebase streams (ViewModel manages subscriptions).
+
+### CallState sealed hierarchy
+
+```dart
+sealed class CallState { … }
+final class Idle             extends CallState { … }
+final class IncomingCall     extends CallState { callId, callerId }
+final class ActiveCall       extends CallState { isCaller, remoteUserId, callId,
+                                                 startedAt, turnServer, volume, muted }
+```
+
+HomeScreen switches exhaustively on `CallState` — no `isInCall` booleans.
+
+### Result type
+
+```dart
+sealed class Result<T, E> { … }
+final class Ok<T, E>  extends Result<T, E> { final T value; }
+final class Err<T, E> extends Result<T, E> { final E error; }
+final class Unit { … }   // used for void-valued Ok results
+
+sealed class AppError { … }
+final class SignalingError  extends AppError { final Object cause; }
+final class ConnectionError extends AppError { final Object cause; }
+final class AudioError      extends AppError { final Object cause; }
+```
+
+Use cases return `Result<CallLogEntry, AppError>` or `Result<Unit, AppError>`. The ViewModel switches on the result and emits `HomeEvent.callSetupFailed` on `Err`.
+
+---
 
 ## Call Flow
 
 ```
 Device A (caller)               Firebase RTDB              Device B (callee)
       │                              │                           │
-      │ _makeCall()                  │                           │
-      ├─► writeOffer + metadata ────►│                           │
-      ├─► notifyRemoteUser ─────────►│──── incomingCall fires ──►│
+      │ makeCall()                   │                           │
+      ├─► MakeCallUseCase ──────────►│                           │
+      │   writeOffer + metadata ────►│                           │
+      │   notifyRemoteUser ─────────►│──── incomingCall stream ─►│
       │                             │         whitelisted?       │
-      │                             │         → _answerCall()    │
+      │                             │         → answerCall()     │
       │                             │         no → show button   │
-      │                             │◄─── writeAnswer ──────────│
-      │◄── listenForAnswer ─────────│                           │
-      │◄────────────── ICE candidates exchanged ───────────────►│
+      │   answerStream(callId) ─────►│◄─── writeAnswer ──────────│
+      │◄────────────── iceCandidate stream / iceCandidates() ───►│
       │◄═══════════ WebRTC audio (one-way: callee→caller) ══════►│
       │                             │                           │
-      │ _endCall()                  │                           │
-      ├─► writeCancelledSignal ────►│──── onCancelled ─────────►│
-      │ cancelListeners + close     │     cancelListeners+close  │
+      │ endCall()                   │                           │
+      ├─► EndCallUseCase ───────────►│                           │
+      │   writeCancelledSignal ─────►│──── callCancelled() ─────►│
+      │   cancelListeners + close   │     cancelListeners+close  │
       │                             │                           │
       │ OR: either side taps        │                           │
-      │ notification "End Call" ──► HomeScreen._onForegroundData │
-      │                 → _endCall()│                           │
+      │ notification "End Call" ──► HomeViewModel._onForegroundData
+      │                 → endCall() │                           │
 ```
+
+---
 
 ## Firebase Realtime Database Schema
 
@@ -125,34 +164,63 @@ Device A (caller)               Firebase RTDB              Device B (callee)
 
 Call ID format: `{callerId}_{calleeId}_{timestampMs}`
 
+---
+
 ## File Map
 
 ```
 lib/
-  main.dart                       ← Firebase init, userId check → Onboarding or Home
+  main.dart                         ← 2-liner: AppBootstrapper.boot() + runApp()
+  core/
+    app_bootstrapper.dart           ← Firebase init, DI, foreground, userId check
+    result.dart                     ← Result<T,E>, Ok, Err, Unit
+    app_error.dart                  ← SignalingError, ConnectionError, AudioError
+  di/
+    service_locator.dart            ← get_it registrations (singletons + factory)
+  models/
+    call_state.dart                 ← Sealed: Idle, IncomingCall, ActiveCall
+    call_log_entry.dart             ← CallLogEntry (value object + JSON)
+    ice_candidate_model.dart        ← Domain ICE candidate (no flutter_webrtc types)
+    session_description.dart        ← Domain SDP wrapper
+  interfaces/
+    peer_connection_service.dart    ← Abstract WebRTC port
+    signaling_service.dart          ← Abstract signaling port
+    audio_service.dart              ← Abstract audio session port
+    foreground_service.dart         ← Abstract foreground notification port
+    call_log_repository.dart        ← Abstract call history port
+    settings_repository.dart        ← Abstract settings port
+  viewmodels/
+    home_view_model.dart            ← Call orchestration, state, events, timers
+  usecases/
+    make_call_usecase.dart          ← Outgoing call setup → Result<CallLogEntry,AppError>
+    answer_call_usecase.dart        ← Incoming call answer → Result<CallLogEntry,AppError>
+    end_call_usecase.dart           ← Call teardown → Result<Unit,AppError>
   screens/
-    onboarding_screen.dart        ← First-launch: pick unique userId, check RTDB
-    home_screen.dart              ← Main orchestrator: call setup, state, UI
-    call_screen.dart              ← Active call UI
-    settings_screen.dart          ← Call log retention, auto-answer whitelist
-    call_logs_screen.dart         ← Call history: duration, bytes, TURN used
+    onboarding_screen.dart          ← First-launch: pick unique userId, check RTDB
+    home_screen.dart                ← Pure StreamBuilder observer; no call logic
+    call_screen.dart                ← Active call UI (timer, stats, volume, mute)
+    settings_screen.dart            ← Call log retention, auto-answer whitelist
+    call_logs_screen.dart           ← Call history: duration, bytes, TURN used
   services/
-    firebase_signaling.dart       ← All Firebase RTDB operations (signaling)
-    webrtc_service.dart           ← RTCPeerConnection, TURN fetch, audio, stats
-    foreground_service.dart       ← Android foreground service wrapper
-    audio_service.dart            ← MethodChannel: audio mode, proximity wake lock
-    call_log_service.dart         ← CallLogEntry model + SharedPrefs persistence
-    settings_service.dart         ← Call log retention + auto-answer whitelist
+    firebase_signaling.dart         ← SignalingService impl; Stream-based, _subs tracking
+    webrtc_service.dart             ← PeerConnectionService impl; per-call StreamControllers
+    foreground_service.dart         ← Free functions (initForegroundService etc.) +
+                                       ForegroundServiceImpl class
+    audio_service.dart              ← PlatformAudioService (implements AudioService)
+    call_log_service.dart           ← CallLogService; SharedPrefs + in-memory write-through cache
+    settings_service.dart           ← SettingsService (implements SettingsRepository)
 
-android/app/build.gradle.kts     ← google-services plugin, minSdk=24
-android/settings.gradle.kts      ← google-services classpath
+android/app/build.gradle.kts       ← google-services plugin, minSdk=24
+android/settings.gradle.kts        ← google-services classpath
 android/app/src/main/
-  AndroidManifest.xml             ← Permissions + foreground service declaration
-  kotlin/.../MainActivity.kt      ← stock FlutterActivity
+  AndroidManifest.xml               ← Permissions + foreground service declaration
+  kotlin/.../MainActivity.kt        ← stock FlutterActivity
 pubspec.yaml
 ```
 
 **Not in repo (must be added manually):** `android/app/google-services.json`
+
+---
 
 ## Commands
 
@@ -163,24 +231,31 @@ flutter run          # run on connected Android device/emulator
 flutter build apk    # build release APK
 ```
 
+---
+
 ## Key Decisions & Current Behavior
 
 - **Identity**: User picks a unique ID on first launch (OnboardingScreen checks RTDB). Stored in SharedPreferences. No Firebase Auth.
+- **MVVM + use cases**: `HomeViewModel` owns all call orchestration. `HomeScreen` is a pure `StreamBuilder` observer. Three use cases (`MakeCallUseCase`, `AnswerCallUseCase`, `EndCallUseCase`) handle all I/O. All wired together via get_it DI.
+- **Sealed CallState**: `Idle | IncomingCall | ActiveCall`. The ViewModel emits state transitions; HomeScreen switches exhaustively. One-shot side-effects (snackbars, banners) go through `Stream<HomeEvent>`.
+- **Result type**: Use cases return `Result<T, AppError>` (sealed Ok/Err). Use cases wrap their bodies in try/catch. HomeViewModel pattern-matches and emits `HomeEvent.callSetupFailed` on `Err`.
+- **Stream-based events**: No mutable callback properties on services. `PeerConnectionService` exposes per-call `connectionLost`, `connectionEstablished`, `iceCandidate` broadcast streams (closed in `close()`). `SignalingService` exposes stream-returning methods; call-scoped streams are closed by `cancelListeners()`.
 - **Incoming call**: Whitelisted callers auto-connect. Non-whitelisted callers show an Answer button (40s timeout, then dismissed).
-- **Auto-answer whitelist**: Managed in Settings. Checked by SettingsService on incoming call. Persisted in SharedPreferences.
-- **Call ending**: Both sides can end the call via the notification "End Call" button. Only the caller has an in-app End Call button. Callee UI shows "Waiting for caller to end" — but can end via notification.
-- **One-way audio**: Callee mic ON → sends to caller. Caller mic OFF (track.enabled = false). Caller hears callee; callee hears nothing. By design for child-monitoring use case.
+- **Auto-answer whitelist**: Managed in Settings. Checked by `SettingsService` on incoming call. Persisted in SharedPreferences.
+- **Call ending**: Both sides can end via the notification "End Call" button. Only the caller has an in-app End Call button. Callee UI shows "Waiting…" — but can end via notification.
+- **One-way audio**: Callee mic ON → sends to caller. Caller mic OFF (`track.enabled = false`). Caller hears callee; callee hears nothing. By design for child-monitoring use case.
 - **Volume control**: Per-call WebRTC gain (0.0–1.0) via `Helper.setVolume()`. Does not touch system volume. Persisted across calls. Disabled while muted.
 - **Mute**: Sets remote volume to 0.0 (caller side). Synced between in-app slider, foreground notification button, and CallScreen UI.
 - **TURN selection**: Caller picks Metered / ExpressTURN / Both from segmented button. Callee always uses 'both'. Actual relay used is detected post-call via `resolveActualTurnUsed()` and stored in call log.
-- **Call logs**: Every call (caller and callee) is logged: role, remote userId, start/end time, bytes sent/received, TURN selected vs actually used. Retention configurable (1–30 days, default 7).
-- **Proximity sensor**: AudioService acquires proximity wake lock during caller's call — screen turns off when held to ear.
-- **Foreground service**: Keeps process alive in background. Notification shows "Waiting for calls…" or "In call…" with action buttons. Does NOT survive force-close (FCM push needed for that).
-- **Busy signal**: If callee is already in a call (or has a pending incoming call), it writes `/users/{callerId}/busySignal`. Caller gets a snackbar and auto-ends.
-- **Connection timeout**: Caller auto-hangs up after 30s if WebRTC never reaches connected state.
-- **Remote disconnect detection**: WebRTC `onConnectionState` fires `onConnectionLost` once on failure/closed/disconnected. Caller sees a 2s banner then call ends. Callee also fires `_onCallEnded`.
+- **Call logs**: Every call (caller and callee) is logged: role, remote userId, start/end time, bytes sent/received, TURN selected vs actually used. Retention configurable (1–30 days, default 7). `CallLogService` uses a write-through in-memory cache to avoid redundant disk reads within a session.
+- **Proximity sensor**: `PlatformAudioService` acquires a proximity wake lock during the caller's call — screen turns off when held to ear.
+- **Foreground service**: Keeps process alive in background. Notification shows "Waiting for calls…" or "In call…" with action buttons. Does NOT survive force-close (FCM push needed for that). The free functions in `foreground_service.dart` are used from `AppBootstrapper`; the `ForegroundServiceImpl` class is injected into use cases.
+- **Busy signal**: If callee is already in a call (or has a pending incoming call), it writes `/users/{callerId}/busySignal`. Caller's `busySignal()` stream fires → snackbar + auto-end.
+- **Connection timeout**: Caller auto-hangs up after 30s if WebRTC never reaches connected state (`connectionEstablished` stream never emits).
+- **Remote disconnect detection**: `connectionLost` stream emits once on failure/closed/disconnected. Caller sees a 2s banner then calls `endCall()`. Callee's `connectionLost` stream fires `_onCallEnded()`.
 - **No cleanup**: Old call records in Firebase RTDB persist indefinitely. No TTL, no Cloud Function pruning.
-- **No error handling**: Core WebRTC and Firebase calls use `!` force-unwraps and no try/catch (except TURN credential fetch).
+
+---
 
 ## Production Gaps
 
@@ -192,7 +267,7 @@ Items still needed before full production release:
 | Critical | Firebase Auth | Replace custom ID system with proper auth (phone/anonymous) |
 | Critical | TURN credential proxy | Firebase Cloud Function to proxy Metered API; API key never in client |
 | High | FCM push notifications | App can't receive calls when force-closed |
-| High | Error handling | Add try/catch around WebRTC + Firebase ops; remove `!` unwraps |
+| High | Remaining `!` unwraps | Use cases have try/catch; raw service code still uses force-unwraps |
 | High | iOS support | Add iOS target, permissions, background audio entitlement |
 | Medium | Firebase data cleanup | Cloud Function or TTL to prune stale call records |
 | Medium | Two-way audio | Enable both sides to speak/hear (currently callee→caller only) |
