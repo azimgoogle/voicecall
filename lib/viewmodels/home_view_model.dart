@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/result.dart';
 import '../interfaces/call_log_repository.dart';
 import '../interfaces/peer_connection_service.dart';
 import '../interfaces/settings_repository.dart';
@@ -27,6 +28,9 @@ enum HomeEvent {
 
   /// The remote side dropped the connection; caller's screen shows a banner.
   remoteDisconnected,
+
+  /// A use-case failed to set up or tear down a call; show an error snackbar.
+  callSetupFailed,
 }
 
 /// Orchestrates the entire call lifecycle for [HomeScreen].
@@ -131,11 +135,12 @@ class HomeViewModel {
   /// Initiates an outgoing call to [remoteId] using [turnServer].
   ///
   /// Delegates all I/O to [MakeCallUseCase]; manages state transition
-  /// and the 30-second connection timeout.
+  /// and the 30-second connection timeout. Emits [HomeEvent.callSetupFailed]
+  /// and resets to [Idle] if the use case returns an [Err].
   Future<void> makeCall(String remoteId, String turnServer) async {
     if (remoteId.isEmpty) return;
 
-    _currentLogEntry = await _makeCall.execute(
+    final result = await _makeCall.execute(
       callerId: _userId,
       remoteId: remoteId,
       turnServer: turnServer,
@@ -148,45 +153,58 @@ class HomeViewModel {
       },
     );
 
-    _emit(ActiveCall(
-      isCaller: true,
-      remoteUserId: remoteId,
-      callId: _currentLogEntry!.callId,
-      startedAt: _currentLogEntry!.startedAt,
-      turnServer: turnServer,
-      volume: _defaultVolume,
-      muted: false,
-    ));
+    switch (result) {
+      case Ok(:final value):
+        _currentLogEntry = value;
+        _emit(ActiveCall(
+          isCaller: true,
+          remoteUserId: remoteId,
+          callId: _currentLogEntry!.callId,
+          startedAt: _currentLogEntry!.startedAt,
+          turnServer: turnServer,
+          volume: _defaultVolume,
+          muted: false,
+        ));
+        _startStatsTracking();
+        _callConnected = false;
+        _callTimeoutTimer = Timer(const Duration(seconds: 30), () {
+          if (_state is ActiveCall && !_callConnected) _onCallTimeout();
+        });
+        _signaling.listenForBusySignal(_userId, _onCalleeBusy);
 
-    _startStatsTracking();
-
-    _callConnected = false;
-    _callTimeoutTimer = Timer(const Duration(seconds: 30), () {
-      if (_state is ActiveCall && !_callConnected) _onCallTimeout();
-    });
-
-    _signaling.listenForBusySignal(_userId, _onCalleeBusy);
+      case Err():
+        _emitEvent(HomeEvent.callSetupFailed);
+        _emit(const Idle());
+    }
   }
 
   /// Answers an incoming call identified by [callId].
   ///
   /// Delegates all I/O to [AnswerCallUseCase]; manages state transition.
+  /// Resets to [Idle] silently if the use case returns an [Err].
   Future<void> answerCall(String callId) async {
-    _currentLogEntry = await _answerCall.execute(
+    final result = await _answerCall.execute(
       callId: callId,
       onConnectionLost: _onCallEnded,
     );
 
-    final parts = callId.split('_');
-    final remoteUserId = parts.length >= 2 ? parts[0] : callId;
+    switch (result) {
+      case Ok(:final value):
+        _currentLogEntry = value;
+        final parts = callId.split('_');
+        final remoteUserId = parts.length >= 2 ? parts[0] : callId;
+        _emit(ActiveCall(
+          isCaller: false,
+          remoteUserId: remoteUserId,
+          callId: callId,
+          startedAt: _currentLogEntry!.startedAt,
+          turnServer: 'both',
+        ));
 
-    _emit(ActiveCall(
-      isCaller: false,
-      remoteUserId: remoteUserId,
-      callId: callId,
-      startedAt: _currentLogEntry!.startedAt,
-      turnServer: 'both',
-    ));
+      case Err():
+        _emitEvent(HomeEvent.callSetupFailed);
+        _emit(const Idle());
+    }
   }
 
   /// Accepts a pending [IncomingCall] — cancels the timeout then answers.
@@ -200,7 +218,8 @@ class HomeViewModel {
 
   /// Explicitly ends the active call (user tap or notification button).
   ///
-  /// Delegates teardown to [EndCallUseCase]; manages state transition.
+  /// Delegates teardown to [EndCallUseCase]; always emits [Idle] even if
+  /// the use case returns an [Err] (the connection is gone either way).
   Future<void> endCall() async {
     _callTimeoutTimer?.cancel();
     _callTimeoutTimer = null;
@@ -211,6 +230,8 @@ class HomeViewModel {
     final entry = _currentLogEntry;
     _currentLogEntry = null;
 
+    // Ignore Err: teardown failures don't require user action; Idle is
+    // the correct next state regardless.
     await _endCall.execute(
       currentEntry: entry,
       writeCancelled: true,
@@ -343,6 +364,7 @@ class HomeViewModel {
     final entry = _currentLogEntry;
     _currentLogEntry = null;
 
+    // Ignore Err: callee-side teardown failures don't require user action.
     _endCall.execute(
       currentEntry: entry,
       writeCancelled: false,

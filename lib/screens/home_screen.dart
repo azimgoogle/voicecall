@@ -89,6 +89,15 @@ class _HomeScreenState extends State<HomeScreen> {
             duration: Duration(seconds: 3),
           ));
         }
+
+      case HomeEvent.callSetupFailed:
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Call failed to connect. Please try again.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ));
+        }
     }
   }
 
