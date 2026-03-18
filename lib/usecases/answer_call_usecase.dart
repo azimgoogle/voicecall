@@ -7,6 +7,10 @@ import '../interfaces/signaling_service.dart';
 import '../models/call_log_entry.dart';
 
 /// Encapsulates all logic for answering an incoming call.
+///
+/// Connection-event subscriptions ([connectionLost]) are the caller's
+/// responsibility — subscribe to [PeerConnectionService] streams after
+/// this method returns [Ok].
 class AnswerCallUseCase {
   final SignalingService _signaling;
   final PeerConnectionService _peerConnection;
@@ -30,10 +34,8 @@ class AnswerCallUseCase {
   /// incoming call UI and reset to idle.
   Future<Result<CallLogEntry, AppError>> execute({
     required String callId,
-    required void Function() onConnectionLost,
   }) async {
     try {
-      _peerConnection.onConnectionLost = onConnectionLost;
       await _peerConnection.init(isCaller: false);
 
       final parts = callId.split('_');
@@ -49,10 +51,13 @@ class AnswerCallUseCase {
 
       await _logRepository.saveEntry(logEntry);
 
-      _peerConnection.onIceCandidate = (candidate) {
+      // Forward local ICE candidates to signaling.
+      // The subscription auto-cancels when the iceCandidate controller closes
+      // at call teardown (PeerConnectionService.close).
+      _peerConnection.iceCandidate.listen((candidate) {
         _signaling.writeIceCandidate(
             callId: callId, isCaller: false, candidate: candidate);
-      };
+      });
 
       final offer = await _signaling.readOffer(callId);
       await _peerConnection.setRemoteDescription(offer);
@@ -61,7 +66,9 @@ class AnswerCallUseCase {
       await _signaling.writeAnswer(callId: callId, answer: answer);
       await _foreground.updateNotification('In call...', showEndCall: true);
 
-      _signaling.listenForIceCandidates(callId, true, (candidate) {
+      // Apply remote ICE candidates from the caller.
+      // The subscription auto-cancels when cancelListeners closes the stream.
+      _signaling.iceCandidates(callId, true).listen((candidate) {
         _peerConnection.addIceCandidate(candidate);
       });
 

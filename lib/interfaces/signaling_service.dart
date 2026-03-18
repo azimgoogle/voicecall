@@ -37,47 +37,47 @@ abstract class SignalingService {
     required IceCandidateModel candidate,
   });
 
-  /// Listen for ICE candidates from the remote peer.
-  /// [fromCaller] true → read offerCandidates; false → answerCandidates.
-  void listenForIceCandidates(
-    String callId,
-    bool fromCaller,
-    void Function(IceCandidateModel candidate) callback,
-  );
+  /// Stream of ICE candidates from the remote peer.
+  ///
+  /// [fromCaller] true → reads offerCandidates; false → answerCandidates.
+  /// The stream is call-scoped and is closed by [cancelListeners].
+  Stream<IceCandidateModel> iceCandidates(String callId, bool fromCaller);
 
   // ── Call lifecycle ────────────────────────────────────────────────────────
 
   /// Notify the remote user of an incoming call.
   Future<void> notifyRemoteUser(String remoteUserId, String callId);
 
-  /// Listen for the callee's answer SDP.
-  void listenForAnswer(
-    String callId,
-    void Function(SessionDescription answer) callback,
-  );
+  /// Stream that emits the callee's answer [SessionDescription] once written.
+  ///
+  /// The stream is call-scoped and is closed by [cancelListeners].
+  Stream<SessionDescription> answerStream(String callId);
 
   /// Write a cancellation signal when the caller hangs up before answer.
   Future<void> writeCancelledSignal(String callId);
 
-  /// Listen for a cancellation signal.
-  /// Returns the subscription so the callee can cancel it on accept.
-  StreamSubscription<dynamic> listenForCallCancelled(
-    String callId,
-    void Function() callback,
-  );
+  /// Stream that emits once when a cancellation signal is detected.
+  ///
+  /// The caller manages the subscription lifetime directly (returned
+  /// subscription is cancelled by the ViewModel on accept or dismiss).
+  Stream<void> callCancelled(String callId);
 
-  /// Listen for an incoming call notification.
-  /// Returns the subscription for external lifecycle management.
-  StreamSubscription<dynamic> listenForIncomingCall(
-    String userId,
-    void Function(String callId) callback,
-  );
+  /// Stream that emits an incoming call ID each time a new call arrives.
+  ///
+  /// The implementation clears the incoming-call node after each emit to
+  /// prevent re-delivery. The ViewModel manages the subscription lifetime
+  /// (persists for the ViewModel's lifetime; not cancelled by [cancelListeners]).
+  Stream<String> incomingCall(String userId);
 
   // ── Busy signal ───────────────────────────────────────────────────────────
 
   Future<void> writeBusySignal(String callerId);
 
-  void listenForBusySignal(String userId, void Function() callback);
+  /// Stream that emits once when a busy signal is detected for [userId].
+  ///
+  /// The implementation clears the busy-signal node after each emit.
+  /// The stream is call-scoped and is closed by [cancelListeners].
+  Stream<void> busySignal(String userId);
 
   // ── Identity ──────────────────────────────────────────────────────────────
 
@@ -86,5 +86,9 @@ abstract class SignalingService {
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
 
+  /// Cancel all active call-scoped Firebase listeners and close their streams.
+  ///
+  /// Does NOT cancel the [incomingCall] or [callCancelled] subscriptions —
+  /// those are managed directly by the ViewModel.
   Future<void> cancelListeners();
 }

@@ -8,18 +8,25 @@ import '../models/session_description.dart';
 /// Implementations may use flutter_webrtc, a native media stack, or any other
 /// transport — callers are fully decoupled from the underlying library types.
 abstract class PeerConnectionService {
-  // ── Connection event hooks ────────────────────────────────────────────────
+  // ── Connection event streams ──────────────────────────────────────────────
 
-  /// Fired once when the connection permanently fails or closes.
-  void Function()? get onConnectionLost;
-  set onConnectionLost(void Function()? callback);
+  /// Emits once when the connection permanently fails or closes.
+  ///
+  /// The stream is per-call: a new stream is returned after each [init] and
+  /// the stream closes (sends a done event) when [close] is called.
+  Stream<void> get connectionLost;
 
-  /// Fired when the connection reaches the 'connected' state.
-  void Function()? get onConnectionEstablished;
-  set onConnectionEstablished(void Function()? callback);
+  /// Emits once when the connection reaches the 'connected' state.
+  ///
+  /// The stream is per-call: a new stream is returned after each [init] and
+  /// the stream closes (sends a done event) when [close] is called.
+  Stream<void> get connectionEstablished;
 
-  /// Receives local ICE candidates to be forwarded via [SignalingService].
-  set onIceCandidate(void Function(IceCandidateModel candidate) callback);
+  /// Emits each local ICE candidate that must be forwarded via [SignalingService].
+  ///
+  /// The stream is per-call: a new stream is returned after each [init] and
+  /// the stream closes (sends a done event) when [close] is called.
+  Stream<IceCandidateModel> get iceCandidate;
 
   /// Emits live stats: `{bytesSent: int, bytesReceived: int}` at ~1 Hz.
   Stream<Map<String, dynamic>> get statsStream;

@@ -42,6 +42,10 @@ enum HomeEvent {
 /// Use-cases ([MakeCallUseCase], [AnswerCallUseCase], [EndCallUseCase]) handle
 /// all I/O and protocol work; the ViewModel manages state transitions, timers,
 /// and one-shot UI events.
+///
+/// All async event APIs use Streams — no mutable callback properties are set
+/// on the underlying services. The ViewModel subscribes to the relevant streams
+/// after each use-case succeeds and cancels subscriptions on call teardown.
 class HomeViewModel {
   final SignalingService _signaling;
   final PeerConnectionService _peerConnection;
@@ -111,9 +115,22 @@ class HomeViewModel {
 
   CallLogEntry? _currentLogEntry;
 
+  /// Subscription to the ViewModel-lifetime incoming-call stream.
   StreamSubscription? _incomingCallSub;
+
+  /// Subscription to the caller-cancellation stream (IncomingCall state only).
   StreamSubscription? _incomingCallCancelSub;
+
+  /// Subscription to the live stats stream (ActiveCall state, caller only).
   StreamSubscription? _statsSub;
+
+  /// Subscriptions to per-call connection-event streams from [PeerConnectionService].
+  StreamSubscription? _connectionLostSub;
+  StreamSubscription? _connectionEstablishedSub;
+
+  /// Subscription to the busy-signal stream (ActiveCall state, caller only).
+  StreamSubscription? _busySignalSub;
+
   Timer? _incomingCallTimeoutTimer;
   Timer? _callTimeoutTimer;
   bool _callConnected = false;
@@ -144,9 +161,9 @@ class HomeViewModel {
 
   /// Initiates an outgoing call to [remoteId] using [turnServer].
   ///
-  /// Delegates all I/O to [MakeCallUseCase]; manages state transition
-  /// and the 30-second connection timeout. Emits [HomeEvent.callSetupFailed]
-  /// and resets to [Idle] if the use case returns an [Err].
+  /// Delegates all I/O to [MakeCallUseCase]; then subscribes to the
+  /// per-call connection-event streams exposed by [PeerConnectionService].
+  /// Emits [HomeEvent.callSetupFailed] and resets to [Idle] on [Err].
   Future<void> makeCall(String remoteId, String turnServer) async {
     if (remoteId.isEmpty) return;
 
@@ -155,17 +172,27 @@ class HomeViewModel {
       remoteId: remoteId,
       turnServer: turnServer,
       initialVolume: _defaultVolume,
-      onConnectionLost: _onCallerConnectionLost,
-      onConnectionEstablished: () {
-        _callConnected = true;
-        _callTimeoutTimer?.cancel();
-        _callTimeoutTimer = null;
-      },
     );
 
     switch (result) {
       case Ok(:final value):
         _currentLogEntry = value;
+
+        // Subscribe to per-call connection events now that init() has run.
+        _connectionEstablishedSub =
+            _peerConnection.connectionEstablished.listen((_) {
+          _callConnected = true;
+          _callTimeoutTimer?.cancel();
+          _callTimeoutTimer = null;
+        });
+        _connectionLostSub = _peerConnection.connectionLost.listen((_) {
+          _onCallerConnectionLost();
+        });
+
+        // Subscribe to busy signal from the callee side.
+        _busySignalSub =
+            _signaling.busySignal(_userId).listen((_) => _onCalleeBusy());
+
         _emit(ActiveCall(
           isCaller: true,
           remoteUserId: remoteId,
@@ -180,7 +207,6 @@ class HomeViewModel {
         _callTimeoutTimer = Timer(const Duration(seconds: 30), () {
           if (_state is ActiveCall && !_callConnected) _onCallTimeout();
         });
-        _signaling.listenForBusySignal(_userId, _onCalleeBusy);
 
       case Err():
         _emitEvent(HomeEvent.callSetupFailed);
@@ -190,17 +216,20 @@ class HomeViewModel {
 
   /// Answers an incoming call identified by [callId].
   ///
-  /// Delegates all I/O to [AnswerCallUseCase]; manages state transition.
-  /// Resets to [Idle] silently if the use case returns an [Err].
+  /// Delegates all I/O to [AnswerCallUseCase]; then subscribes to the
+  /// per-call connectionLost stream. Resets to [Idle] silently on [Err].
   Future<void> answerCall(String callId) async {
-    final result = await _answerCall.execute(
-      callId: callId,
-      onConnectionLost: _onCallEnded,
-    );
+    final result = await _answerCall.execute(callId: callId);
 
     switch (result) {
       case Ok(:final value):
         _currentLogEntry = value;
+
+        // Subscribe to connection-lost events now that init() has run.
+        _connectionLostSub = _peerConnection.connectionLost.listen((_) {
+          _onCallEnded();
+        });
+
         final parts = callId.split('_');
         final remoteUserId = parts.length >= 2 ? parts[0] : callId;
         _emit(ActiveCall(
@@ -228,12 +257,19 @@ class HomeViewModel {
 
   /// Explicitly ends the active call (user tap or notification button).
   ///
-  /// Delegates teardown to [EndCallUseCase]; always emits [Idle] even if
-  /// the use case returns an [Err] (the connection is gone either way).
+  /// Cancels all call-scoped subscriptions, delegates teardown to
+  /// [EndCallUseCase], and always emits [Idle] even on [Err].
   Future<void> endCall() async {
     _callTimeoutTimer?.cancel();
     _callTimeoutTimer = null;
     _callConnected = false;
+
+    _connectionLostSub?.cancel();
+    _connectionLostSub = null;
+    _connectionEstablishedSub?.cancel();
+    _connectionEstablishedSub = null;
+    _busySignalSub?.cancel();
+    _busySignalSub = null;
 
     _statsSub?.cancel();
     _statsSub = null;
@@ -284,8 +320,11 @@ class HomeViewModel {
     _callTimeoutTimer?.cancel();
     _incomingCallTimeoutTimer?.cancel();
     _incomingCallSub?.cancel();
-    _statsSub?.cancel();
     _incomingCallCancelSub?.cancel();
+    _statsSub?.cancel();
+    _connectionLostSub?.cancel();
+    _connectionEstablishedSub?.cancel();
+    _busySignalSub?.cancel();
     _signaling.cancelListeners();
     _peerConnection.close();
     _stateController.close();
@@ -303,33 +342,32 @@ class HomeViewModel {
     if (!_eventsController.isClosed) _eventsController.add(event);
   }
 
-  /// Subscribes to the incoming-call channel. Called once in [init].
-  /// The returned subscription persists for the ViewModel's lifetime —
+  /// Subscribes to the incoming-call stream. Called once in [init].
+  /// The subscription persists for the ViewModel's lifetime —
   /// [SignalingService.cancelListeners] does NOT cancel it.
   void _listenForIncomingCalls() {
     _incomingCallSub?.cancel();
-    _incomingCallSub = _signaling.listenForIncomingCall(
-      _userId,
-      (callId) async {
-        final callerId = callId.split('_').first;
+    _incomingCallSub = _signaling.incomingCall(_userId).listen((callId) async {
+      final callerId = callId.split('_').first;
 
-        if (_state is ActiveCall || _state is IncomingCall) {
-          await _signaling.writeBusySignal(callerId);
-          return;
-        }
+      if (_state is ActiveCall || _state is IncomingCall) {
+        await _signaling.writeBusySignal(callerId);
+        return;
+      }
 
-        final autoAnswer = await _settings.isAutoAnswer(callerId);
-        if (autoAnswer) {
-          await answerCall(callId);
-        } else {
-          _emit(IncomingCall(callId: callId, callerId: callerId));
-          _incomingCallCancelSub = _signaling.listenForCallCancelled(
-              callId, _onIncomingCallCancelled);
-          _incomingCallTimeoutTimer =
-              Timer(const Duration(seconds: 40), _onIncomingCallCancelled);
-        }
-      },
-    );
+      final autoAnswer = await _settings.isAutoAnswer(callerId);
+      if (autoAnswer) {
+        await answerCall(callId);
+      } else {
+        _emit(IncomingCall(callId: callId, callerId: callerId));
+        _incomingCallCancelSub =
+            _signaling.callCancelled(callId).listen((_) {
+          _onIncomingCallCancelled();
+        });
+        _incomingCallTimeoutTimer =
+            Timer(const Duration(seconds: 40), _onIncomingCallCancelled);
+      }
+    });
   }
 
   void _onIncomingCallCancelled() {
@@ -368,6 +406,11 @@ class HomeViewModel {
     _incomingCallTimeoutTimer = null;
     _incomingCallCancelSub?.cancel();
     _incomingCallCancelSub = null;
+
+    _connectionLostSub?.cancel();
+    _connectionLostSub = null;
+    _connectionEstablishedSub?.cancel();
+    _connectionEstablishedSub = null;
 
     _statsSub?.cancel();
     _statsSub = null;

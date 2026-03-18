@@ -26,24 +26,24 @@ class WebRtcService implements PeerConnectionService {
   /// Volume to apply as soon as the remote track arrives (0.0–1.0).
   double? _pendingVolume;
 
-  // ── PeerConnectionService: connection event hooks ─────────────────────────
+  // ── PeerConnectionService: per-call event stream controllers ──────────────
+  //
+  // Created fresh on every [init] call and closed on [close], so that
+  // subscribers automatically receive a done event at call teardown.
+
+  late StreamController<void> _connectionLostController;
+  late StreamController<void> _connectionEstablishedController;
+  late StreamController<IceCandidateModel> _iceCandidateController;
 
   @override
-  void Function()? onConnectionLost;
+  Stream<void> get connectionLost => _connectionLostController.stream;
 
   @override
-  void Function()? onConnectionEstablished;
+  Stream<void> get connectionEstablished =>
+      _connectionEstablishedController.stream;
 
   @override
-  set onIceCandidate(void Function(IceCandidateModel candidate) callback) {
-    _pc!.onIceCandidate = (RTCIceCandidate c) {
-      callback(IceCandidateModel(
-        candidate: c.candidate ?? '',
-        sdpMid: c.sdpMid,
-        sdpMLineIndex: c.sdpMLineIndex,
-      ));
-    };
-  }
+  Stream<IceCandidateModel> get iceCandidate => _iceCandidateController.stream;
 
   @override
   Stream<Map<String, dynamic>> get statsStream => _statsController.stream;
@@ -110,6 +110,11 @@ class WebRtcService implements PeerConnectionService {
   ///   - Callee: mic ON, ignores remote audio from caller
   @override
   Future<void> init({bool isCaller = false, String turnServer = 'both'}) async {
+    // Fresh per-call stream controllers — closed in [close].
+    _connectionLostController = StreamController<void>.broadcast();
+    _connectionEstablishedController = StreamController<void>.broadcast();
+    _iceCandidateController = StreamController<IceCandidateModel>.broadcast();
+
     final iceServers = await _fetchIceServers(turnServer: turnServer);
 
     final rtcConfig = {
@@ -122,7 +127,9 @@ class WebRtcService implements PeerConnectionService {
     bool connectionLostFired = false;
     _pc!.onConnectionState = (RTCPeerConnectionState state) {
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-        onConnectionEstablished?.call();
+        if (!_connectionEstablishedController.isClosed) {
+          _connectionEstablishedController.add(null);
+        }
       }
       if (connectionLostFired) return;
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
@@ -130,7 +137,19 @@ class WebRtcService implements PeerConnectionService {
           state ==
               RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
         connectionLostFired = true;
-        onConnectionLost?.call();
+        if (!_connectionLostController.isClosed) {
+          _connectionLostController.add(null);
+        }
+      }
+    };
+
+    _pc!.onIceCandidate = (RTCIceCandidate c) {
+      if (!_iceCandidateController.isClosed) {
+        _iceCandidateController.add(IceCandidateModel(
+          candidate: c.candidate ?? '',
+          sdpMid: c.sdpMid,
+          sdpMLineIndex: c.sdpMLineIndex,
+        ));
       }
     };
 
@@ -170,8 +189,6 @@ class WebRtcService implements PeerConnectionService {
 
   @override
   Future<void> close() async {
-    onConnectionLost = null;
-    onConnectionEstablished = null;
     _statsTimer?.cancel();
     _statsTimer = null;
     _localStream?.getTracks().forEach((t) => t.stop());
@@ -181,6 +198,12 @@ class WebRtcService implements PeerConnectionService {
     _pc = null;
     _remoteAudioTrack = null;
     _pendingVolume = null;
+
+    // Close per-call controllers last — subscribers receive a done event
+    // signalling that no further connection events will be emitted.
+    await _connectionLostController.close();
+    await _connectionEstablishedController.close();
+    await _iceCandidateController.close();
   }
 
   // ── PeerConnectionService: negotiation ────────────────────────────────────

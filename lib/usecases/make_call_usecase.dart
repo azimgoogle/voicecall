@@ -40,13 +40,15 @@ class MakeCallUseCase {
   /// Returns [Ok] carrying the new [CallLogEntry] on success, or [Err] carrying
   /// an [AppError] if any step fails. On failure the caller should treat the
   /// call as not started and reset UI state accordingly.
+  ///
+  /// Connection-event subscriptions ([connectionLost], [connectionEstablished])
+  /// are the caller's responsibility — subscribe to [PeerConnectionService]
+  /// streams after this method returns [Ok].
   Future<Result<CallLogEntry, AppError>> execute({
     required String callerId,
     required String remoteId,
     required String turnServer,
     required double initialVolume,
-    required void Function() onConnectionLost,
-    required void Function() onConnectionEstablished,
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -62,9 +64,6 @@ class MakeCallUseCase {
         startedAt: DateTime.now(),
       );
 
-      _peerConnection.onConnectionLost = onConnectionLost;
-      _peerConnection.onConnectionEstablished = onConnectionEstablished;
-
       await _peerConnection.init(isCaller: true, turnServer: turnServer);
       await _peerConnection.setRemoteVolume(initialVolume);
       await _audio.startAudioSession();
@@ -72,10 +71,13 @@ class MakeCallUseCase {
 
       await _logRepository.saveEntry(logEntry);
 
-      _peerConnection.onIceCandidate = (candidate) {
+      // Forward local ICE candidates to signaling.
+      // The subscription auto-cancels when the iceCandidate controller closes
+      // at call teardown (PeerConnectionService.close).
+      _peerConnection.iceCandidate.listen((candidate) {
         _signaling.writeIceCandidate(
             callId: callId, isCaller: true, candidate: candidate);
-      };
+      });
 
       final offer = await _peerConnection.createOffer();
       await _signaling.writeOffer(
@@ -88,10 +90,15 @@ class MakeCallUseCase {
         isMuted: false,
       );
 
-      _signaling.listenForAnswer(callId, (answer) {
+      // Apply callee's answer when it arrives.
+      // The subscription auto-cancels when cancelListeners closes the stream.
+      _signaling.answerStream(callId).listen((answer) {
         _peerConnection.setRemoteDescription(answer);
       });
-      _signaling.listenForIceCandidates(callId, false, (candidate) {
+
+      // Apply remote ICE candidates from the callee.
+      // The subscription auto-cancels when cancelListeners closes the stream.
+      _signaling.iceCandidates(callId, false).listen((candidate) {
         _peerConnection.addIceCandidate(candidate);
       });
 

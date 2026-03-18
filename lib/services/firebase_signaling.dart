@@ -14,7 +14,14 @@ import '../models/session_description.dart';
 /// touching any other file.
 class FirebaseSignaling implements SignalingService {
   final DatabaseReference _db = FirebaseDatabase.instance.ref();
+
+  /// Firebase subscriptions for call-scoped streams.
+  /// Cancelled by [cancelListeners] at call teardown.
   final List<StreamSubscription> _subs = [];
+
+  /// StreamControllers backing call-scoped streams.
+  /// Closed by [cancelListeners] so subscribers receive a done event.
+  final List<StreamController<dynamic>> _callControllers = [];
 
   // ── Call ID ───────────────────────────────────────────────────────────────
 
@@ -76,20 +83,22 @@ class FirebaseSignaling implements SignalingService {
   }
 
   @override
-  void listenForIceCandidates(
-    String callId,
-    bool fromCaller,
-    void Function(IceCandidateModel candidate) callback,
-  ) {
+  Stream<IceCandidateModel> iceCandidates(String callId, bool fromCaller) {
     final node = fromCaller ? 'offerCandidates' : 'answerCandidates';
-    _subs.add(_db.child('calls/$callId/$node').onChildAdded.listen((event) {
-      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-      callback(IceCandidateModel(
-        candidate: data['candidate'] as String,
-        sdpMid: data['sdpMid'] as String?,
-        sdpMLineIndex: data['sdpMLineIndex'] as int?,
-      ));
-    }));
+    final ctrl = StreamController<IceCandidateModel>.broadcast();
+    _callControllers.add(ctrl);
+    _subs.add(
+      _db.child('calls/$callId/$node').onChildAdded.listen((event) {
+        if (ctrl.isClosed) return;
+        final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+        ctrl.add(IceCandidateModel(
+          candidate: data['candidate'] as String,
+          sdpMid: data['sdpMid'] as String?,
+          sdpMLineIndex: data['sdpMLineIndex'] as int?,
+        ));
+      }),
+    );
+    return ctrl.stream;
   }
 
   // ── Call lifecycle ────────────────────────────────────────────────────────
@@ -100,20 +109,23 @@ class FirebaseSignaling implements SignalingService {
   }
 
   @override
-  void listenForAnswer(
-    String callId,
-    void Function(SessionDescription answer) callback,
-  ) {
-    _subs.add(_db.child('calls/$callId/answer').onValue.listen((event) {
-      final data = event.snapshot.value;
-      if (data != null) {
-        final map = Map<String, dynamic>.from(data as Map);
-        callback(SessionDescription(
-          sdp: map['sdp'] as String,
-          type: map['type'] as String,
-        ));
-      }
-    }));
+  Stream<SessionDescription> answerStream(String callId) {
+    final ctrl = StreamController<SessionDescription>.broadcast();
+    _callControllers.add(ctrl);
+    _subs.add(
+      _db.child('calls/$callId/answer').onValue.listen((event) {
+        if (ctrl.isClosed) return;
+        final data = event.snapshot.value;
+        if (data != null) {
+          final map = Map<String, dynamic>.from(data as Map);
+          ctrl.add(SessionDescription(
+            sdp: map['sdp'] as String,
+            type: map['type'] as String,
+          ));
+        }
+      }),
+    );
+    return ctrl.stream;
   }
 
   @override
@@ -122,29 +134,27 @@ class FirebaseSignaling implements SignalingService {
   }
 
   @override
-  StreamSubscription<dynamic> listenForCallCancelled(
-    String callId,
-    void Function() callback,
-  ) {
-    return _db.child('calls/$callId/cancelled').onValue.listen((event) {
-      if (event.snapshot.value == true) {
-        callback();
-      }
-    });
+  Stream<void> callCancelled(String callId) {
+    // Not call-scoped via _subs: the ViewModel manages this subscription
+    // directly (cancelled on accept or dismiss, like the old StreamSubscription).
+    return _db
+        .child('calls/$callId/cancelled')
+        .onValue
+        .where((event) => event.snapshot.value == true)
+        .map((_) => null);
   }
 
   @override
-  StreamSubscription<dynamic> listenForIncomingCall(
-    String userId,
-    void Function(String callId) callback,
-  ) {
+  Stream<String> incomingCall(String userId) {
+    // Not call-scoped via _subs: the ViewModel holds this subscription for
+    // its entire lifetime (mirrors the old listenForIncomingCall behaviour).
     final ref = _db.child('users/$userId/incomingCall');
-    return ref.onValue.listen((event) async {
-      final callId = event.snapshot.value as String?;
-      if (callId != null) {
-        await ref.remove();
-        callback(callId);
-      }
+    return ref.onValue
+        .where((event) => event.snapshot.value is String)
+        .asyncMap((event) async {
+      final callId = event.snapshot.value as String;
+      await ref.remove();
+      return callId;
     });
   }
 
@@ -156,14 +166,18 @@ class FirebaseSignaling implements SignalingService {
   }
 
   @override
-  void listenForBusySignal(String userId, void Function() callback) {
+  Stream<void> busySignal(String userId) {
+    final ctrl = StreamController<void>.broadcast();
+    _callControllers.add(ctrl);
     _subs.add(
-        _db.child('users/$userId/busySignal').onValue.listen((event) async {
-      if (event.snapshot.value != null) {
-        await _db.child('users/$userId/busySignal').remove();
-        callback();
-      }
-    }));
+      _db.child('users/$userId/busySignal').onValue.listen((event) async {
+        if (event.snapshot.value != null) {
+          await _db.child('users/$userId/busySignal').remove();
+          if (!ctrl.isClosed) ctrl.add(null);
+        }
+      }),
+    );
+    return ctrl.stream;
   }
 
   // ── Identity ──────────────────────────────────────────────────────────────
@@ -182,5 +196,10 @@ class FirebaseSignaling implements SignalingService {
       await sub.cancel();
     }
     _subs.clear();
+
+    for (final ctrl in _callControllers) {
+      await ctrl.close();
+    }
+    _callControllers.clear();
   }
 }
