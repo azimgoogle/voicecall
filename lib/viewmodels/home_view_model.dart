@@ -343,6 +343,7 @@ class HomeViewModel {
   // ── Private ───────────────────────────────────────────────────────────────
 
   void _emit(CallState newState) {
+    _crashReporter.log('callState → ${newState.runtimeType}');
     _state = newState;
     if (!_stateController.isClosed) _stateController.add(newState);
   }

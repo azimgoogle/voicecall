@@ -68,8 +68,11 @@ class MakeCallUseCase {
         startedAt: DateTime.now(),
       );
 
+      _crashReporter.log('makeCall: init peerConnection (turn=$turnServer)');
       await _peerConnection.init(isCaller: true, turnServer: turnServer);
       await _peerConnection.setRemoteVolume(initialVolume);
+
+      _crashReporter.log('makeCall: starting audio session');
       await _audio.startAudioSession();
       await _audio.acquireProximityWakeLock();
 
@@ -87,9 +90,14 @@ class MakeCallUseCase {
             _crashReporter.recordError(e, s, reason: 'iceCandidateSend'),
       );
 
+      _crashReporter.log('makeCall: creating offer');
       final offer = await _peerConnection.createOffer();
+
+      _crashReporter.log('makeCall: writing offer to Firebase');
       await _signaling.writeOffer(
           callId: callId, offer: offer, caller: callerId, callee: remoteId);
+
+      _crashReporter.log('makeCall: notifying callee');
       await _signaling.notifyRemoteUser(remoteId, callId);
       await _foreground.updateNotification(
         'In call...',
@@ -97,6 +105,8 @@ class MakeCallUseCase {
         showMute: true,
         isMuted: false,
       );
+
+      _crashReporter.log('makeCall: listening for answer and ICE candidates');
 
       // Apply callee's answer when it arrives.
       // The subscription auto-cancels when cancelListeners closes the stream.

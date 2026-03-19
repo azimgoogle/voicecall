@@ -40,6 +40,7 @@ class AnswerCallUseCase {
     required String callId,
   }) async {
     try {
+      _crashReporter.log('answerCall: init peerConnection');
       await _peerConnection.init(isCaller: false);
 
       final parts = callId.split('_');
@@ -67,12 +68,20 @@ class AnswerCallUseCase {
             _crashReporter.recordError(e, s, reason: 'iceCandidateSend'),
       );
 
+      _crashReporter.log('answerCall: reading offer from Firebase');
       final offer = await _signaling.readOffer(callId);
+
+      _crashReporter.log('answerCall: setRemoteDescription done');
       await _peerConnection.setRemoteDescription(offer);
 
+      _crashReporter.log('answerCall: creating answer');
       final answer = await _peerConnection.createAnswer();
+
+      _crashReporter.log('answerCall: writing answer to Firebase');
       await _signaling.writeAnswer(callId: callId, answer: answer);
       await _foreground.updateNotification('In call...', showEndCall: true);
+
+      _crashReporter.log('answerCall: listening for ICE candidates');
 
       // Apply remote ICE candidates from the caller.
       // The subscription auto-cancels when cancelListeners closes the stream.
