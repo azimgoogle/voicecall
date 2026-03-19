@@ -1,4 +1,6 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -16,12 +18,29 @@ abstract final class AppBootstrapper {
   /// Sequence:
   ///   1. Ensure Flutter bindings are initialised.
   ///   2. Initialise Firebase.
-  ///   3. Register all services in the DI container.
-  ///   4. Configure the foreground service notification channel.
-  ///   5. Check SharedPreferences for an existing userId.
+  ///   3. Enable Crashlytics and wire global error hooks.
+  ///   4. Register all services in the DI container.
+  ///   5. Configure the foreground service notification channel.
+  ///   6. Check SharedPreferences for an existing userId.
   static Future<bool> boot() async {
     WidgetsFlutterBinding.ensureInitialized();
     await Firebase.initializeApp();
+
+    // Enable Crashlytics crash collection (no-op in debug if disabled there).
+    await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(
+      !kDebugMode,
+    );
+
+    // Catch Flutter framework / widget-tree errors (e.g. overflow, null layout).
+    FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+
+    // Catch async errors thrown outside the Flutter zone (Platform channels,
+    // dart:isolate, timer callbacks that escape the zone, etc.).
+    PlatformDispatcher.instance.onError = (error, stack) {
+      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      return true;
+    };
+
     setupServiceLocator();
     initForegroundService();
 

@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/result.dart';
 import '../interfaces/audio_service.dart';
 import '../interfaces/call_log_repository.dart';
+import '../interfaces/crash_reporter.dart';
 import '../interfaces/foreground_service.dart';
 import '../interfaces/peer_connection_service.dart';
 import '../interfaces/settings_repository.dart';
@@ -51,6 +52,7 @@ class HomeViewModel {
   final PeerConnectionService _peerConnection;
   final SettingsRepository _settings;
   final ForegroundService _foreground;
+  final CrashReporter _crashReporter;
 
   late final MakeCallUseCase _makeCall;
   late final AnswerCallUseCase _answerCall;
@@ -63,22 +65,26 @@ class HomeViewModel {
     required SettingsRepository settings,
     required AudioService audioService,
     required ForegroundService foregroundService,
+    required CrashReporter crashReporter,
   })  : _signaling = signaling,
         _peerConnection = peerConnection,
         _settings = settings,
-        _foreground = foregroundService {
+        _foreground = foregroundService,
+        _crashReporter = crashReporter {
     _makeCall = MakeCallUseCase(
       signaling: signaling,
       peerConnection: peerConnection,
       logRepository: logRepository,
       audioService: audioService,
       foregroundService: foregroundService,
+      crashReporter: crashReporter,
     );
     _answerCall = AnswerCallUseCase(
       signaling: signaling,
       peerConnection: peerConnection,
       logRepository: logRepository,
       foregroundService: foregroundService,
+      crashReporter: crashReporter,
     );
     _endCall = EndCallUseCase(
       signaling: signaling,
@@ -145,6 +151,7 @@ class HomeViewModel {
   Future<void> init(String userId) async {
     await Permission.microphone.request();
     _userId = userId;
+    await _crashReporter.setUserIdentifier(userId);
 
     final prefs = await SharedPreferences.getInstance();
     _defaultVolume = prefs.getDouble(_callVolumeKey) ?? 1.0;
@@ -208,7 +215,8 @@ class HomeViewModel {
           if (_state is ActiveCall && !_callConnected) _onCallTimeout();
         });
 
-      case Err():
+      case Err(:final error):
+        _crashReporter.recordError(error, null, reason: 'makeCall');
         _emitEvent(HomeEvent.callSetupFailed);
         _emit(const Idle());
     }
@@ -240,7 +248,8 @@ class HomeViewModel {
           turnServer: 'both',
         ));
 
-      case Err():
+      case Err(:final error):
+        _crashReporter.recordError(error, null, reason: 'answerCall');
         _emitEvent(HomeEvent.callSetupFailed);
         _emit(const Idle());
     }
@@ -347,7 +356,8 @@ class HomeViewModel {
   /// [SignalingService.cancelListeners] does NOT cancel it.
   void _listenForIncomingCalls() {
     _incomingCallSub?.cancel();
-    _incomingCallSub = _signaling.incomingCall(_userId).listen((callId) async {
+    _incomingCallSub = _signaling.incomingCall(_userId).listen(
+      (callId) async {
       final callerId = callId.split('_').first;
 
       if (_state is ActiveCall || _state is IncomingCall) {
@@ -367,7 +377,10 @@ class HomeViewModel {
         _incomingCallTimeoutTimer =
             Timer(const Duration(seconds: 40), _onIncomingCallCancelled);
       }
-    });
+    },
+      onError: (Object e, StackTrace s) =>
+          _crashReporter.recordError(e, s, reason: 'incomingCallStream'),
+    );
   }
 
   void _onIncomingCallCancelled() {

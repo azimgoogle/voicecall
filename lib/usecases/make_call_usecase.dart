@@ -4,6 +4,7 @@ import '../core/app_error.dart';
 import '../core/result.dart';
 import '../interfaces/audio_service.dart';
 import '../interfaces/call_log_repository.dart';
+import '../interfaces/crash_reporter.dart';
 import '../interfaces/foreground_service.dart';
 import '../interfaces/peer_connection_service.dart';
 import '../interfaces/signaling_service.dart';
@@ -19,6 +20,7 @@ class MakeCallUseCase {
   final CallLogRepository _logRepository;
   final AudioService _audio;
   final ForegroundService _foreground;
+  final CrashReporter _crashReporter;
 
   MakeCallUseCase({
     required SignalingService signaling,
@@ -26,11 +28,13 @@ class MakeCallUseCase {
     required CallLogRepository logRepository,
     required AudioService audioService,
     required ForegroundService foregroundService,
+    required CrashReporter crashReporter,
   })  : _signaling = signaling,
         _peerConnection = peerConnection,
         _logRepository = logRepository,
         _audio = audioService,
-        _foreground = foregroundService;
+        _foreground = foregroundService,
+        _crashReporter = crashReporter;
 
   static const String _lastRemoteIdKey = 'last_remote_id';
   static const String _callMuteKey = 'call_mute';
@@ -74,10 +78,14 @@ class MakeCallUseCase {
       // Forward local ICE candidates to signaling.
       // The subscription auto-cancels when the iceCandidate controller closes
       // at call teardown (PeerConnectionService.close).
-      _peerConnection.iceCandidate.listen((candidate) {
-        _signaling.writeIceCandidate(
-            callId: callId, isCaller: true, candidate: candidate);
-      });
+      _peerConnection.iceCandidate.listen(
+        (candidate) {
+          _signaling.writeIceCandidate(
+              callId: callId, isCaller: true, candidate: candidate);
+        },
+        onError: (Object e, StackTrace s) =>
+            _crashReporter.recordError(e, s, reason: 'iceCandidateSend'),
+      );
 
       final offer = await _peerConnection.createOffer();
       await _signaling.writeOffer(
@@ -92,15 +100,23 @@ class MakeCallUseCase {
 
       // Apply callee's answer when it arrives.
       // The subscription auto-cancels when cancelListeners closes the stream.
-      _signaling.answerStream(callId).listen((answer) {
-        _peerConnection.setRemoteDescription(answer);
-      });
+      _signaling.answerStream(callId).listen(
+        (answer) {
+          _peerConnection.setRemoteDescription(answer);
+        },
+        onError: (Object e, StackTrace s) =>
+            _crashReporter.recordError(e, s, reason: 'answerStream'),
+      );
 
       // Apply remote ICE candidates from the callee.
       // The subscription auto-cancels when cancelListeners closes the stream.
-      _signaling.iceCandidates(callId, false).listen((candidate) {
-        _peerConnection.addIceCandidate(candidate);
-      });
+      _signaling.iceCandidates(callId, false).listen(
+        (candidate) {
+          _peerConnection.addIceCandidate(candidate);
+        },
+        onError: (Object e, StackTrace s) =>
+            _crashReporter.recordError(e, s, reason: 'iceCandidatesCallee'),
+      );
 
       return Ok(logEntry);
     } catch (e) {
