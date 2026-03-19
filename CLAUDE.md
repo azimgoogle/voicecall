@@ -1,5 +1,10 @@
 # CLAUDE.md — Project Context for AI Assistants
 
+## Working Conventions
+
+- **Keep this file current**: After any architectural change, new dependency, renamed symbol, or new file, update the relevant section of this file before closing the task.
+- **Tests for every feature**: Any non-trivial feature addition or change to existing behaviour must be accompanied by unit tests. Use the existing `test/` structure and mocking patterns as the template.
+
 ## What This Is
 
 Production 1-to-1 audio calling app for families. WebRTC for audio, Firebase Realtime Database for signaling, Android target. Package name: `com.familycall.children_voice_call`.
@@ -9,6 +14,7 @@ Production 1-to-1 audio calling app for families. WebRTC for audio, Firebase Rea
 - Flutter (Dart) — Android only (no iOS yet)
 - `flutter_webrtc: ^1.3.1` — WebRTC peer connection + audio
 - `firebase_core: ^3.12.1` + `firebase_database: ^11.3.4` — Realtime Database signaling
+- `firebase_crashlytics: ^4.3.3` — non-fatal error recording, breadcrumbs, custom keys
 - `shared_preferences: ^2.5.3` — persist userId, volume, mute, last remote ID
 - `permission_handler: ^11.4.0` — runtime microphone permission
 - `flutter_foreground_task: ^9.2.0` — Android foreground service (keeps process alive)
@@ -17,6 +23,10 @@ Production 1-to-1 audio calling app for families. WebRTC for audio, Firebase Rea
 - STUN: `stun:stun.l.google.com:19302` (+ stun1, stun2)
 - TURN: Metered.ca (dynamic credentials via API) + ExpressTURN (static fallback)
 - Min SDK: 24
+
+**Dev dependencies (tests only)**
+- `mocktail: ^1.0.4` — mock library (no code-gen); used in all unit tests
+- `fake_async: ^1.3.1` — fake Timer/clock; used for 30 s timeout + 40 s incoming-call timeout tests
 
 ## Architecture
 
@@ -67,6 +77,7 @@ The codebase follows **Ports & Adapters (Hexagonal Architecture)** with **MVVM**
           │  ForegroundService                  │
           │  CallLogRepository                  │
           │  SettingsRepository                 │
+          │  CrashReporter                      │
           └─────────────────┬──────────────────┘
                             │ implemented by
           ┌─────────────────┴──────────────────┐
@@ -77,6 +88,7 @@ The codebase follows **Ports & Adapters (Hexagonal Architecture)** with **MVVM**
           │  ForegroundServiceImpl              │
           │  CallLogService (+ in-memory cache) │
           │  SettingsService                    │
+          │  FirebaseCrashReporter              │
           └─────────────────────────────────────┘
 ```
 
@@ -189,6 +201,7 @@ lib/
     foreground_service.dart         ← Abstract foreground notification port
     call_log_repository.dart        ← Abstract call history port
     settings_repository.dart        ← Abstract settings port
+    crash_reporter.dart             ← Abstract crash-reporting port (log, recordError, setCustomKey, setUserIdentifier)
   viewmodels/
     home_view_model.dart            ← Call orchestration, state, events, timers
   usecases/
@@ -209,6 +222,17 @@ lib/
     audio_service.dart              ← PlatformAudioService (implements AudioService)
     call_log_service.dart           ← CallLogService; SharedPrefs + in-memory write-through cache
     settings_service.dart           ← SettingsService (implements SettingsRepository)
+    firebase_crash_reporter.dart    ← FirebaseCrashReporter (implements CrashReporter via firebase_crashlytics)
+
+test/
+  widget_test.dart                  ← Placeholder (void main {}); no widget tests yet
+  mocks.dart                        ← 7 Mock classes + registerFallbackValues()
+  usecases/
+    make_call_usecase_test.dart     ← 12 unit tests
+    answer_call_usecase_test.dart   ← 14 unit tests
+    end_call_usecase_test.dart      ← 15 unit tests
+  viewmodels/
+    home_view_model_test.dart       ← 18 unit tests (incl. fakeAsync timer tests)
 
 android/app/build.gradle.kts       ← google-services plugin, minSdk=24
 android/settings.gradle.kts        ← google-services classpath
@@ -225,10 +249,12 @@ pubspec.yaml
 ## Commands
 
 ```bash
-flutter pub get      # install dependencies
-flutter analyze      # static analysis
-flutter run          # run on connected Android device/emulator
-flutter build apk    # build release APK
+flutter pub get                          # install dependencies
+flutter analyze                          # static analysis
+flutter run                              # run on connected Android device/emulator
+flutter build apk                        # build release APK
+flutter test test/                       # run all 62 unit tests
+flutter test test/ --reporter=expanded   # verbose per-test output
 ```
 
 ---
@@ -254,6 +280,8 @@ flutter build apk    # build release APK
 - **Connection timeout**: Caller auto-hangs up after 30s if WebRTC never reaches connected state (`connectionEstablished` stream never emits).
 - **Remote disconnect detection**: `connectionLost` stream emits once on failure/closed/disconnected. Caller sees a 2s banner then calls `endCall()`. Callee's `connectionLost` stream fires `_onCallEnded()`.
 - **No cleanup**: Old call records in Firebase RTDB persist indefinitely. No TTL, no Cloud Function pruning.
+- **Crashlytics abstraction**: `CrashReporter` interface (`lib/interfaces/crash_reporter.dart`) wraps `firebase_crashlytics`. Injected into `HomeViewModel` and all three use cases. Every `_emit()` call appends a breadcrumb. Custom keys per call: `role` (caller/callee), `turn_server_selected` (caller only), `call_state` (current `CallState` type). `FirebaseCrashReporter` (`lib/services/firebase_crash_reporter.dart`) is the only concrete impl; swapping to another backend (e.g. Sentry) requires changing only the DI registration in `service_locator.dart`.
+- **`turn_server_selected` key (caller only)**: Named to distinguish the caller's *chosen configuration* (metered / expressturn / both) from the *actual relay type* (stun / direct / turn) determined post-call via `resolveActualTurnUsed()` and stored in the call log. Callee logs no equivalent key — `role=callee` already deterministically implies `both`.
 
 ---
 
