@@ -1,1 +1,2 @@
-// POC — no tests needed
+// POC — placeholder so the test runner finds a valid main().
+void main() {}
