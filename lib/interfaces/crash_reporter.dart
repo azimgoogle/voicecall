@@ -11,4 +11,9 @@ abstract class CrashReporter {
 
   /// Associates subsequent reports with [id] (e.g., the app's userId).
   Future<void> setUserIdentifier(String id);
+
+  /// Attaches a key-value pair to every subsequent report in this session.
+  ///
+  /// [value] must be a bool, int, double, or String.
+  void setCustomKey(String key, Object value);
 }

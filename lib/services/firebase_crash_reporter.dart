@@ -19,4 +19,8 @@ class FirebaseCrashReporter implements CrashReporter {
   @override
   Future<void> setUserIdentifier(String id) =>
       FirebaseCrashlytics.instance.setUserIdentifier(id);
+
+  @override
+  void setCustomKey(String key, Object value) =>
+      FirebaseCrashlytics.instance.setCustomKey(key, value);
 }

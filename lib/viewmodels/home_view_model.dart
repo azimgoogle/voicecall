@@ -174,6 +174,9 @@ class HomeViewModel {
   Future<void> makeCall(String remoteId, String turnServer) async {
     if (remoteId.isEmpty) return;
 
+    _crashReporter.setCustomKey('role', 'caller');
+    _crashReporter.setCustomKey('turn_server_selected', turnServer);
+
     final result = await _makeCall.execute(
       callerId: _userId,
       remoteId: remoteId,
@@ -227,6 +230,8 @@ class HomeViewModel {
   /// Delegates all I/O to [AnswerCallUseCase]; then subscribes to the
   /// per-call connectionLost stream. Resets to [Idle] silently on [Err].
   Future<void> answerCall(String callId) async {
+    _crashReporter.setCustomKey('role', 'callee');
+
     final result = await _answerCall.execute(callId: callId);
 
     switch (result) {
@@ -344,6 +349,7 @@ class HomeViewModel {
 
   void _emit(CallState newState) {
     _crashReporter.log('callState → ${newState.runtimeType}');
+    _crashReporter.setCustomKey('call_state', newState.runtimeType.toString());
     _state = newState;
     if (!_stateController.isClosed) _stateController.add(newState);
   }
