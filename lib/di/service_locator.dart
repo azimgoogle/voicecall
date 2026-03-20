@@ -1,5 +1,6 @@
 import 'package:get_it/get_it.dart';
 
+import '../interfaces/analytics_repository.dart';
 import '../interfaces/audio_service.dart';
 import '../interfaces/call_log_repository.dart';
 import '../interfaces/crash_reporter.dart';
@@ -9,6 +10,7 @@ import '../interfaces/settings_repository.dart';
 import '../interfaces/signaling_service.dart';
 import '../services/audio_service.dart';
 import '../services/call_log_service.dart';
+import '../services/firebase_analytics_reporter.dart';
 import '../services/firebase_crash_reporter.dart';
 import '../services/firebase_signaling.dart';
 import '../services/foreground_service.dart';
@@ -28,6 +30,7 @@ final GetIt sl = GetIt.instance;
 ///   sl.registerLazySingleton<PeerConnectionService>(() => NativePeerConnection());
 void setupServiceLocator() {
   sl.registerLazySingleton<CrashReporter>(() => FirebaseCrashReporter());
+  sl.registerLazySingleton<AnalyticsRepository>(() => FirebaseAnalyticsReporter());
 
   sl.registerLazySingleton<SignalingService>(() => FirebaseSignaling());
   sl.registerLazySingleton<PeerConnectionService>(() => WebRtcService());
@@ -46,5 +49,6 @@ void setupServiceLocator() {
         audioService: sl<AudioService>(),
         foregroundService: sl<ForegroundService>(),
         crashReporter: sl<CrashReporter>(),
+        analytics: sl<AnalyticsRepository>(),
       ));
 }

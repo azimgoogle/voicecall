@@ -1,5 +1,6 @@
 import 'package:mocktail/mocktail.dart';
 
+import 'package:family_call/interfaces/analytics_repository.dart';
 import 'package:family_call/interfaces/audio_service.dart';
 import 'package:family_call/interfaces/call_log_repository.dart';
 import 'package:family_call/interfaces/crash_reporter.dart';
@@ -12,6 +13,8 @@ import 'package:family_call/models/ice_candidate_model.dart';
 import 'package:family_call/models/session_description.dart';
 
 // ── Mock classes ──────────────────────────────────────────────────────────────
+
+class MockAnalyticsRepository extends Mock implements AnalyticsRepository {}
 
 class MockSignalingService extends Mock implements SignalingService {}
 
@@ -31,6 +34,7 @@ class MockCrashReporter extends Mock implements CrashReporter {}
 
 /// Call once from setUpAll in every test file that uses these mocks.
 void registerFallbackValues() {
+  registerFallbackValue(<String, Object>{});
   registerFallbackValue(const SessionDescription(sdp: 'fallback', type: 'offer'));
   registerFallbackValue(const IceCandidateModel(candidate: 'fallback'));
   registerFallbackValue(

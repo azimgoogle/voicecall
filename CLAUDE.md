@@ -14,6 +14,7 @@ Production 1-to-1 audio calling app for families. WebRTC for audio, Firebase Rea
 - Flutter (Dart) — Android only (no iOS yet)
 - `flutter_webrtc: ^1.3.1` — WebRTC peer connection + audio
 - `firebase_core: ^3.12.1` + `firebase_database: ^11.3.4` — Realtime Database signaling
+- `firebase_analytics: ^11.3.3` — product-metric event logging (call funnel, quality)
 - `firebase_crashlytics: ^4.3.3` — non-fatal error recording, breadcrumbs, custom keys
 - `shared_preferences: ^2.5.3` — persist userId, volume, mute, last remote ID
 - `permission_handler: ^11.4.0` — runtime microphone permission
@@ -78,6 +79,7 @@ The codebase follows **Ports & Adapters (Hexagonal Architecture)** with **MVVM**
           │  CallLogRepository                  │
           │  SettingsRepository                 │
           │  CrashReporter                      │
+          │  AnalyticsRepository                │
           └─────────────────┬──────────────────┘
                             │ implemented by
           ┌─────────────────┴──────────────────┐
@@ -89,6 +91,7 @@ The codebase follows **Ports & Adapters (Hexagonal Architecture)** with **MVVM**
           │  CallLogService (+ in-memory cache) │
           │  SettingsService                    │
           │  FirebaseCrashReporter              │
+          │  FirebaseAnalyticsReporter          │
           └─────────────────────────────────────┘
 ```
 
@@ -202,6 +205,7 @@ lib/
     call_log_repository.dart        ← Abstract call history port
     settings_repository.dart        ← Abstract settings port
     crash_reporter.dart             ← Abstract crash-reporting port (log, recordError, setCustomKey, setUserIdentifier)
+    analytics_repository.dart       ← Abstract analytics port (logEvent, setUserId)
   viewmodels/
     home_view_model.dart            ← Call orchestration, state, events, timers
   usecases/
@@ -223,16 +227,17 @@ lib/
     call_log_service.dart           ← CallLogService; SharedPrefs + in-memory write-through cache
     settings_service.dart           ← SettingsService (implements SettingsRepository)
     firebase_crash_reporter.dart    ← FirebaseCrashReporter (implements CrashReporter via firebase_crashlytics)
+    firebase_analytics_reporter.dart ← FirebaseAnalyticsReporter (implements AnalyticsRepository via firebase_analytics)
 
 test/
   widget_test.dart                  ← Placeholder (void main {}); no widget tests yet
-  mocks.dart                        ← 7 Mock classes + registerFallbackValues()
+  mocks.dart                        ← 8 Mock classes + registerFallbackValues()
   usecases/
     make_call_usecase_test.dart     ← 12 unit tests
     answer_call_usecase_test.dart   ← 14 unit tests
     end_call_usecase_test.dart      ← 15 unit tests
   viewmodels/
-    home_view_model_test.dart       ← 18 unit tests (incl. fakeAsync timer tests)
+    home_view_model_test.dart       ← 18 unit tests (incl. fakeAsync timer tests + analytics assertions)
 
 android/app/build.gradle.kts       ← google-services plugin, minSdk=24
 android/settings.gradle.kts        ← google-services classpath
@@ -280,6 +285,7 @@ flutter test test/ --reporter=expanded   # verbose per-test output
 - **Connection timeout**: Caller auto-hangs up after 30s if WebRTC never reaches connected state (`connectionEstablished` stream never emits).
 - **Remote disconnect detection**: `connectionLost` stream emits once on failure/closed/disconnected. Caller sees a 2s banner then calls `endCall()`. Callee's `connectionLost` stream fires `_onCallEnded()`.
 - **No cleanup**: Old call records in Firebase RTDB persist indefinitely. No TTL, no Cloud Function pruning.
+- **Analytics abstraction**: `AnalyticsRepository` interface (`lib/interfaces/analytics_repository.dart`) wraps `firebase_analytics`. Injected into `HomeViewModel` only — all 9 event trigger points live there, not in use cases. Events tracked: `call_initiated`, `call_connected` (with `time_to_connect_ms`), `call_ended` (with `duration_s`, `role`, `bytes_sent`, `bytes_received`, `end_reason`), `call_failed`, `call_timed_out`, `incoming_call_received` (with `auto_answer_eligible`), `incoming_call_answered`, `incoming_call_auto_answered`, `incoming_call_missed`, `callee_busy`, `remote_disconnected`. `FirebaseAnalyticsReporter` is the only concrete impl; swapping backends requires only changing the DI registration. `end_reason` values: `user_ended`, `remote_disconnected`, `callee_busy`, `timed_out`.
 - **Crashlytics abstraction**: `CrashReporter` interface (`lib/interfaces/crash_reporter.dart`) wraps `firebase_crashlytics`. Injected into `HomeViewModel` and all three use cases. Every `_emit()` call appends a breadcrumb. Custom keys per call: `role` (caller/callee), `turn_server_selected` (caller only), `call_state` (current `CallState` type). `FirebaseCrashReporter` (`lib/services/firebase_crash_reporter.dart`) is the only concrete impl; swapping to another backend (e.g. Sentry) requires changing only the DI registration in `service_locator.dart`.
 - **`turn_server_selected` key (caller only)**: Named to distinguish the caller's *chosen configuration* (metered / expressturn / both) from the *actual relay type* (stun / direct / turn) determined post-call via `resolveActualTurnUsed()` and stored in the call log. Callee logs no equivalent key — `role=callee` already deterministically implies `both`.
 

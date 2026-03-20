@@ -35,6 +35,7 @@ void main() {
   late MockCallLogRepository mockLogRepo;
   late MockSettingsRepository mockSettings;
   late MockCrashReporter mockCrash;
+  late MockAnalyticsRepository mockAnalytics;
 
   // Per-test broadcast stream controllers — recreated in setUp.
   late StreamController<void> connectionLostCtrl;
@@ -57,6 +58,7 @@ void main() {
     mockLogRepo = MockCallLogRepository();
     mockSettings = MockSettingsRepository();
     mockCrash = MockCrashReporter();
+    mockAnalytics = MockAnalyticsRepository();
 
     connectionLostCtrl = StreamController<void>.broadcast();
     connectionEstablishedCtrl = StreamController<void>.broadcast();
@@ -74,6 +76,7 @@ void main() {
       logRepo: mockLogRepo,
       settings: mockSettings,
       crash: mockCrash,
+      analytics: mockAnalytics,
       connectionLostCtrl: connectionLostCtrl,
       connectionEstablishedCtrl: connectionEstablishedCtrl,
       iceCandidateCtrl: iceCandidateCtrl,
@@ -91,6 +94,7 @@ void main() {
       audioService: mockAudio,
       foregroundService: mockForeground,
       crashReporter: mockCrash,
+      analytics: mockAnalytics,
     );
   });
 
@@ -124,6 +128,8 @@ void main() {
       expect(active.isCaller, isTrue);
       expect(active.remoteUserId, 'bob');
       expect(active.turnServer, 'metered');
+      verify(() => mockAnalytics.logEvent('call_initiated',
+          parameters: any(named: 'parameters'))).called(1);
     });
 
     test('does nothing when remoteId is empty', () async {
@@ -151,6 +157,8 @@ void main() {
 
       expect(vm.state, isA<Idle>());
       expect(events, contains(HomeEvent.callSetupFailed));
+      verify(() => mockAnalytics.logEvent('call_failed',
+          parameters: any(named: 'parameters'))).called(1);
     });
 
     test('stateStream emits ActiveCall after successful makeCall', () async {
@@ -275,6 +283,8 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(events, contains(HomeEvent.calleeBusy));
+      verify(() => mockAnalytics.logEvent('callee_busy',
+          parameters: any(named: 'parameters'))).called(1);
     });
   });
 
@@ -325,6 +335,8 @@ void main() {
 
         expect(events, contains(HomeEvent.callTimeout));
         expect(vm.state, isA<Idle>());
+        verify(() => mockAnalytics.logEvent('call_timed_out',
+            parameters: any(named: 'parameters'))).called(1);
       });
     });
 
@@ -438,6 +450,7 @@ void _stubAll({
   required MockCallLogRepository logRepo,
   required MockSettingsRepository settings,
   required MockCrashReporter crash,
+  required MockAnalyticsRepository analytics,
   required StreamController<void> connectionLostCtrl,
   required StreamController<void> connectionEstablishedCtrl,
   required StreamController<IceCandidateModel> iceCandidateCtrl,
@@ -534,6 +547,11 @@ void _stubAll({
   when(() => crash.setUserIdentifier(any())).thenAnswer((_) async {});
   when(() => crash.recordError(any(), any(), reason: any(named: 'reason')))
       .thenAnswer((_) async {});
+
+  // ── AnalyticsRepository ───────────────────────────────────────────────────
+  when(() => analytics.logEvent(any(), parameters: any(named: 'parameters')))
+      .thenAnswer((_) async {});
+  when(() => analytics.setUserId(any())).thenAnswer((_) async {});
 }
 
 /// Mocks the flutter.baseflow.com/permissions/methods channel so that

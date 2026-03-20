@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/app_error.dart';
 import '../core/result.dart';
+import '../interfaces/analytics_repository.dart';
 import '../interfaces/audio_service.dart';
 import '../interfaces/call_log_repository.dart';
 import '../interfaces/crash_reporter.dart';
@@ -53,6 +55,7 @@ class HomeViewModel {
   final SettingsRepository _settings;
   final ForegroundService _foreground;
   final CrashReporter _crashReporter;
+  final AnalyticsRepository _analytics;
 
   late final MakeCallUseCase _makeCall;
   late final AnswerCallUseCase _answerCall;
@@ -66,11 +69,13 @@ class HomeViewModel {
     required AudioService audioService,
     required ForegroundService foregroundService,
     required CrashReporter crashReporter,
+    required AnalyticsRepository analytics,
   })  : _signaling = signaling,
         _peerConnection = peerConnection,
         _settings = settings,
         _foreground = foregroundService,
-        _crashReporter = crashReporter {
+        _crashReporter = crashReporter,
+        _analytics = analytics {
     _makeCall = MakeCallUseCase(
       signaling: signaling,
       peerConnection: peerConnection,
@@ -141,6 +146,11 @@ class HomeViewModel {
   Timer? _callTimeoutTimer;
   bool _callConnected = false;
 
+  /// Set before calling [endCall] from internal paths so [endCall] can attach
+  /// the correct [end_reason] to the [call_ended] analytics event.
+  /// Defaults to 'user_ended' if not set.
+  String? _pendingEndReason;
+
   static const String _callVolumeKey = 'call_volume';
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -152,6 +162,7 @@ class HomeViewModel {
     await Permission.microphone.request();
     _userId = userId;
     await _crashReporter.setUserIdentifier(userId);
+    unawaited(_analytics.setUserId(userId));
 
     final prefs = await SharedPreferences.getInstance();
     _defaultVolume = prefs.getDouble(_callVolumeKey) ?? 1.0;
@@ -176,6 +187,10 @@ class HomeViewModel {
 
     _crashReporter.setCustomKey('role', 'caller');
     _crashReporter.setCustomKey('turn_server_selected', turnServer);
+    unawaited(_analytics.logEvent('call_initiated', parameters: {
+      'turn_server_selected': turnServer,
+      'remote_id': remoteId,
+    }));
 
     final result = await _makeCall.execute(
       callerId: _userId,
@@ -194,6 +209,16 @@ class HomeViewModel {
           _callConnected = true;
           _callTimeoutTimer?.cancel();
           _callTimeoutTimer = null;
+          if (_currentLogEntry != null) {
+            final ms = DateTime.now()
+                .difference(_currentLogEntry!.startedAt)
+                .inMilliseconds;
+            unawaited(_analytics.logEvent('call_connected', parameters: {
+              'time_to_connect_ms': ms,
+              'role': 'caller',
+              'turn_server_selected': _currentLogEntry!.turnServer,
+            }));
+          }
         });
         _connectionLostSub = _peerConnection.connectionLost.listen((_) {
           _onCallerConnectionLost();
@@ -220,6 +245,13 @@ class HomeViewModel {
 
       case Err(:final error):
         _crashReporter.recordError(error, null, reason: 'makeCall');
+        unawaited(_analytics.logEvent('call_failed', parameters: {
+          'error_type': switch (error) {
+            SignalingError() => 'signaling',
+            ConnectionError() => 'connection',
+            AudioError() => 'audio',
+          },
+        }));
         _emitEvent(HomeEvent.callSetupFailed);
         _emit(const Idle());
     }
@@ -255,6 +287,13 @@ class HomeViewModel {
 
       case Err(:final error):
         _crashReporter.recordError(error, null, reason: 'answerCall');
+        unawaited(_analytics.logEvent('call_failed', parameters: {
+          'error_type': switch (error) {
+            SignalingError() => 'signaling',
+            ConnectionError() => 'connection',
+            AudioError() => 'audio',
+          },
+        }));
         _emitEvent(HomeEvent.callSetupFailed);
         _emit(const Idle());
     }
@@ -262,6 +301,7 @@ class HomeViewModel {
 
   /// Accepts a pending [IncomingCall] — cancels the timeout then answers.
   Future<void> acceptIncomingCall(String callId) async {
+    unawaited(_analytics.logEvent('incoming_call_answered'));
     _incomingCallTimeoutTimer?.cancel();
     _incomingCallTimeoutTimer = null;
     _incomingCallCancelSub?.cancel();
@@ -290,6 +330,9 @@ class HomeViewModel {
     final entry = _currentLogEntry;
     _currentLogEntry = null;
 
+    final endReason = _pendingEndReason ?? 'user_ended';
+    _pendingEndReason = null;
+
     // Ignore Err: teardown failures don't require user action; Idle is
     // the correct next state regardless.
     await _endCall.execute(
@@ -297,6 +340,18 @@ class HomeViewModel {
       writeCancelled: true,
       releaseAudio: true,
     );
+
+    if (entry != null) {
+      unawaited(_analytics.logEvent('call_ended', parameters: {
+        'duration_s':
+            DateTime.now().difference(entry.startedAt).inSeconds,
+        'role': entry.role,
+        'turn_server_selected': entry.turnServer,
+        'bytes_sent': entry.bytesSent,
+        'bytes_received': entry.bytesReceived,
+        'end_reason': endReason,
+      }));
+    }
     _emit(const Idle());
   }
 
@@ -373,7 +428,12 @@ class HomeViewModel {
       }
 
       final autoAnswer = await _settings.isAutoAnswer(callerId);
+      unawaited(_analytics.logEvent('incoming_call_received', parameters: {
+        'auto_answer_eligible': autoAnswer,
+      }));
+
       if (autoAnswer) {
+        unawaited(_analytics.logEvent('incoming_call_auto_answered'));
         await answerCall(callId);
       } else {
         _emit(IncomingCall(callId: callId, callerId: callerId));
@@ -381,8 +441,10 @@ class HomeViewModel {
             _signaling.callCancelled(callId).listen((_) {
           _onIncomingCallCancelled();
         });
-        _incomingCallTimeoutTimer =
-            Timer(const Duration(seconds: 40), _onIncomingCallCancelled);
+        _incomingCallTimeoutTimer = Timer(const Duration(seconds: 40), () {
+          unawaited(_analytics.logEvent('incoming_call_missed'));
+          _onIncomingCallCancelled();
+        });
       }
     },
       onError: (Object e, StackTrace s) =>
@@ -401,12 +463,18 @@ class HomeViewModel {
   void _onCalleeBusy() {
     _callTimeoutTimer?.cancel();
     _callTimeoutTimer = null;
+    _pendingEndReason = 'callee_busy';
+    unawaited(_analytics.logEvent('callee_busy'));
     _emitEvent(HomeEvent.calleeBusy);
     endCall();
   }
 
   void _onCallTimeout() {
     if (_state is! ActiveCall) return;
+    _pendingEndReason = 'timed_out';
+    unawaited(_analytics.logEvent('call_timed_out', parameters: {
+      'remote_id': (_state as ActiveCall).remoteUserId,
+    }));
     _emitEvent(HomeEvent.callTimeout);
     endCall();
   }
@@ -414,6 +482,15 @@ class HomeViewModel {
   /// Caller-side connection lost: emit event so the screen can show the banner,
   /// then the screen calls [endCall] after the 2-second display window.
   void _onCallerConnectionLost() {
+    _pendingEndReason = 'remote_disconnected';
+    if (_currentLogEntry != null) {
+      final duration =
+          DateTime.now().difference(_currentLogEntry!.startedAt).inSeconds;
+      unawaited(_analytics.logEvent('remote_disconnected', parameters: {
+        'role': 'caller',
+        'duration_s': duration,
+      }));
+    }
     _emitEvent(HomeEvent.remoteDisconnected);
   }
 
@@ -442,7 +519,20 @@ class HomeViewModel {
       currentEntry: entry,
       writeCancelled: false,
       releaseAudio: false,
-    ).then((_) => _emit(const Idle()));
+    ).then((_) {
+      if (entry != null) {
+        unawaited(_analytics.logEvent('call_ended', parameters: {
+          'duration_s':
+              DateTime.now().difference(entry.startedAt).inSeconds,
+          'role': entry.role,
+          'turn_server_selected': entry.turnServer,
+          'bytes_sent': entry.bytesSent,
+          'bytes_received': entry.bytesReceived,
+          'end_reason': 'remote_disconnected',
+        }));
+      }
+      _emit(const Idle());
+    });
   }
 
   void _startStatsTracking() {
