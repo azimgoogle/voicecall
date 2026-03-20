@@ -9,6 +9,7 @@ import '../models/call_state.dart';
 import '../viewmodels/home_view_model.dart';
 import 'call_logs_screen.dart';
 import 'call_screen.dart';
+import 'onboarding_screen.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -37,7 +38,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _initAsync() async {
     final prefs = await SharedPreferences.getInstance();
-    final userId = prefs.getString('userId')!;
+    final userId = prefs.getString('userId');
+    if (userId == null) {
+      // SharedPreferences was cleared unexpectedly — route back to onboarding.
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+        );
+      }
+      return;
+    }
+
     final lastRemoteId = await _viewModel.loadLastRemoteId();
 
     if (mounted) {

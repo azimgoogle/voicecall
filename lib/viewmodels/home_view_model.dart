@@ -239,8 +239,8 @@ class HomeViewModel {
         _emit(ActiveCall(
           isCaller: true,
           remoteUserId: remoteId,
-          callId: _currentLogEntry!.callId,
-          startedAt: _currentLogEntry!.startedAt,
+          callId: value.callId,
+          startedAt: value.startedAt,
           turnServer: turnServer,
           volume: _defaultVolume,
           muted: false,
