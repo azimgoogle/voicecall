@@ -302,22 +302,26 @@ class WebRtcService implements PeerConnectionService {
   void _startStatsPolling() {
     _statsTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (_pc == null) return;
-      final reports = await _pc!.getStats();
-      int bytesSent = 0;
-      int bytesReceived = 0;
-      for (final report in reports) {
-        final values = report.values;
-        if (report.type == 'outbound-rtp') {
-          bytesSent += (values['bytesSent'] as num?)?.toInt() ?? 0;
-        } else if (report.type == 'inbound-rtp') {
-          bytesReceived += (values['bytesReceived'] as num?)?.toInt() ?? 0;
+      try {
+        final reports = await _pc!.getStats();
+        int bytesSent = 0;
+        int bytesReceived = 0;
+        for (final report in reports) {
+          final values = report.values;
+          if (report.type == 'outbound-rtp') {
+            bytesSent += (values['bytesSent'] as num?)?.toInt() ?? 0;
+          } else if (report.type == 'inbound-rtp') {
+            bytesReceived += (values['bytesReceived'] as num?)?.toInt() ?? 0;
+          }
         }
-      }
-      if (!_statsController.isClosed) {
-        _statsController.add({
-          'bytesSent': bytesSent,
-          'bytesReceived': bytesReceived,
-        });
+        if (!_statsController.isClosed) {
+          _statsController.add({
+            'bytesSent': bytesSent,
+            'bytesReceived': bytesReceived,
+          });
+        }
+      } catch (_) {
+        // getStats() failed transiently — skip this tick, keep timer running.
       }
     });
   }

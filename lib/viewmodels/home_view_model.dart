@@ -35,6 +35,9 @@ enum HomeEvent {
 
   /// A use-case failed to set up or tear down a call; show an error snackbar.
   callSetupFailed,
+
+  /// Microphone permission was not granted; user needs to enable it in Settings.
+  microphonePermissionDenied,
 }
 
 /// Orchestrates the entire call lifecycle for [HomeScreen].
@@ -185,6 +188,11 @@ class HomeViewModel {
   Future<void> makeCall(String remoteId, String turnServer) async {
     if (remoteId.isEmpty) return;
 
+    if (!(await Permission.microphone.status).isGranted) {
+      _emitEvent(HomeEvent.microphonePermissionDenied);
+      return;
+    }
+
     _crashReporter.setCustomKey('role', 'caller');
     _crashReporter.setCustomKey('turn_server_selected', turnServer);
     unawaited(_analytics.logEvent('call_initiated', parameters: {
@@ -262,6 +270,11 @@ class HomeViewModel {
   /// Delegates all I/O to [AnswerCallUseCase]; then subscribes to the
   /// per-call connectionLost stream. Resets to [Idle] silently on [Err].
   Future<void> answerCall(String callId) async {
+    if (!(await Permission.microphone.status).isGranted) {
+      _emitEvent(HomeEvent.microphonePermissionDenied);
+      return;
+    }
+
     _crashReporter.setCustomKey('role', 'callee');
 
     final result = await _answerCall.execute(callId: callId);

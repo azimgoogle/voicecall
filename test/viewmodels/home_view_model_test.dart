@@ -24,7 +24,10 @@ import '../mocks.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUpAll(registerFallbackValues);
+  setUpAll(() {
+    registerFallbackValues();
+    _mockPermissionChannel(); // grant mic permission for all tests by default
+  });
 
   // ── Shared fixtures ──────────────────────────────────────────────────────
 
@@ -169,6 +172,29 @@ void main() {
       await Future.microtask(() {}); // allow broadcast-stream delivery microtask to fire
 
       expect(states.whereType<ActiveCall>(), isNotEmpty);
+    });
+  });
+
+  // ── microphone permission denied ──────────────────────────────────────────
+
+  group('microphone permission denied', () {
+    test('makeCall emits microphonePermissionDenied and does not invoke use case',
+        () async {
+      _mockPermissionDenied();
+      addTearDown(_mockPermissionChannel);
+
+      final events = <HomeEvent>[];
+      vm.events.listen(events.add);
+
+      await vm.makeCall('bob', 'metered');
+      await Future.microtask(() {});
+
+      expect(events, contains(HomeEvent.microphonePermissionDenied));
+      expect(vm.state, isA<Idle>());
+      verifyNever(() => mockPc.init(
+            isCaller: any(named: 'isCaller'),
+            turnServer: any(named: 'turnServer'),
+          ));
     });
   });
 
@@ -364,8 +390,6 @@ void main() {
   // ── Incoming call (requires init) ─────────────────────────────────────────
 
   group('incoming call — requires init()', () {
-    setUpAll(_mockPermissionChannel);
-
     setUp(() async {
       when(() => mockForeground.start()).thenAnswer((_) async {});
       await vm.init('testUser');
@@ -554,19 +578,29 @@ void _stubAll({
   when(() => analytics.setUserId(any())).thenAnswer((_) async {});
 }
 
-/// Mocks the flutter.baseflow.com/permissions/methods channel so that
-/// Permission.microphone.request() completes without throwing.
+/// Mocks the permissions channel so that microphone permission is granted.
 void _mockPermissionChannel() {
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .setMockMethodCallHandler(
     const MethodChannel('flutter.baseflow.com/permissions/methods'),
     (MethodCall call) async {
       if (call.method == 'requestPermissions') {
-        // arguments is a List<int> of permission codes; return all as granted (1).
         final perms = (call.arguments as List).cast<int>();
         return {for (final p in perms) p: 1};
       }
       if (call.method == 'checkPermissionStatus') return 1; // granted
+      return null;
+    },
+  );
+}
+
+/// Mocks the permissions channel so that microphone permission is denied.
+void _mockPermissionDenied() {
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(
+    const MethodChannel('flutter.baseflow.com/permissions/methods'),
+    (MethodCall call) async {
+      if (call.method == 'checkPermissionStatus') return 0; // denied
       return null;
     },
   );

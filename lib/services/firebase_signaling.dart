@@ -48,7 +48,12 @@ class FirebaseSignaling implements SignalingService {
   @override
   Future<SessionDescription> readOffer(String callId) async {
     final snap = await _db.child('calls/$callId/offer').get();
-    final data = Map<String, dynamic>.from(snap.value as Map);
+    final raw = snap.value;
+    if (raw is! Map) {
+      throw StateError('readOffer: unexpected data at calls/$callId/offer — '
+          'expected Map, got ${raw.runtimeType}');
+    }
+    final data = Map<String, dynamic>.from(raw);
     return SessionDescription(
       sdp: data['sdp'] as String,
       type: data['type'] as String,
@@ -90,7 +95,9 @@ class FirebaseSignaling implements SignalingService {
     _subs.add(
       _db.child('calls/$callId/$node').onChildAdded.listen((event) {
         if (ctrl.isClosed) return;
-        final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+        final raw = event.snapshot.value;
+        if (raw is! Map) return; // unexpected data shape — skip silently
+        final data = Map<String, dynamic>.from(raw);
         ctrl.add(IceCandidateModel(
           candidate: data['candidate'] as String,
           sdpMid: data['sdpMid'] as String?,
@@ -116,13 +123,13 @@ class FirebaseSignaling implements SignalingService {
       _db.child('calls/$callId/answer').onValue.listen((event) {
         if (ctrl.isClosed) return;
         final data = event.snapshot.value;
-        if (data != null) {
-          final map = Map<String, dynamic>.from(data as Map);
-          ctrl.add(SessionDescription(
-            sdp: map['sdp'] as String,
-            type: map['type'] as String,
-          ));
-        }
+        if (data == null) return;
+        if (data is! Map) return; // unexpected data shape — skip silently
+        final map = Map<String, dynamic>.from(data);
+        ctrl.add(SessionDescription(
+          sdp: map['sdp'] as String,
+          type: map['type'] as String,
+        ));
       }),
     );
     return ctrl.stream;

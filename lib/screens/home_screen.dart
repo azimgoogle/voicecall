@@ -98,6 +98,18 @@ class _HomeScreenState extends State<HomeScreen> {
             duration: Duration(seconds: 3),
           ));
         }
+
+      case HomeEvent.microphonePermissionDenied:
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+              'Microphone permission is required. '
+              'Please enable it in Settings.',
+            ),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ));
+        }
     }
   }
 

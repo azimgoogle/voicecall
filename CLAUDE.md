@@ -214,6 +214,7 @@ lib/
     end_call_usecase.dart           ← Call teardown → Result<Unit,AppError>
   screens/
     onboarding_screen.dart          ← First-launch: pick unique userId, check RTDB
+    startup_error_screen.dart       ← Shown when AppBootstrapper.boot() throws (Firebase init failure)
     home_screen.dart                ← Pure StreamBuilder observer; no call logic
     call_screen.dart                ← Active call UI (timer, stats, volume, mute)
     settings_screen.dart            ← Call log retention, auto-answer whitelist
@@ -237,7 +238,9 @@ test/
     answer_call_usecase_test.dart   ← 14 unit tests
     end_call_usecase_test.dart      ← 15 unit tests
   viewmodels/
-    home_view_model_test.dart       ← 18 unit tests (incl. fakeAsync timer tests + analytics assertions)
+    home_view_model_test.dart       ← 19 unit tests (incl. fakeAsync timer tests, analytics assertions, mic permission denied)
+  services/
+    call_log_service_test.dart      ← 4 unit tests (JSON round-trip, corrupt data recovery)
 
 android/app/build.gradle.kts       ← google-services plugin, minSdk=24
 android/settings.gradle.kts        ← google-services classpath
@@ -258,7 +261,7 @@ flutter pub get                          # install dependencies
 flutter analyze                          # static analysis
 flutter run                              # run on connected Android device/emulator
 flutter build apk                        # build release APK
-flutter test test/                       # run all 62 unit tests
+flutter test test/                       # run all 67 unit tests
 flutter test test/ --reporter=expanded   # verbose per-test output
 ```
 
@@ -287,6 +290,9 @@ flutter test test/ --reporter=expanded   # verbose per-test output
 - **No cleanup**: Old call records in Firebase RTDB persist indefinitely. No TTL, no Cloud Function pruning.
 - **Analytics abstraction**: `AnalyticsRepository` interface (`lib/interfaces/analytics_repository.dart`) wraps `firebase_analytics`. Injected into `HomeViewModel` only — all 9 event trigger points live there, not in use cases. Events tracked: `call_initiated`, `call_connected` (with `time_to_connect_ms`), `call_ended` (with `duration_s`, `role`, `bytes_sent`, `bytes_received`, `end_reason`), `call_failed`, `call_timed_out`, `incoming_call_received` (with `auto_answer_eligible`), `incoming_call_answered`, `incoming_call_auto_answered`, `incoming_call_missed`, `callee_busy`, `remote_disconnected`. `FirebaseAnalyticsReporter` is the only concrete impl; swapping backends requires only changing the DI registration. `end_reason` values: `user_ended`, `remote_disconnected`, `callee_busy`, `timed_out`.
 - **Crashlytics abstraction**: `CrashReporter` interface (`lib/interfaces/crash_reporter.dart`) wraps `firebase_crashlytics`. Injected into `HomeViewModel` and all three use cases. Every `_emit()` call appends a breadcrumb. Custom keys per call: `role` (caller/callee), `turn_server_selected` (caller only), `call_state` (current `CallState` type). `FirebaseCrashReporter` (`lib/services/firebase_crash_reporter.dart`) is the only concrete impl; swapping to another backend (e.g. Sentry) requires changing only the DI registration in `service_locator.dart`.
+- **Error handling layers**: Use cases wrap all I/O in a single outer try/catch returning `Err`. Services below the use case layer are intentionally bare — they rely on callers to catch. Exceptions that escape services are caught at the use-case boundary and returned as typed `AppError`. Two exceptions: (1) `CallLogService.loadLogs/saveEntry` wraps its own JSON parsing (corrupted prefs would crash the call history screen if not caught here); (2) `WebRtcService._startStatsPolling` wraps the async timer callback (async errors in `Timer.periodic` escape the zone if uncaught). Firebase signaling uses conditional casts (`raw is Map`) instead of unchecked `as Map` to prevent mid-call crashes from unexpected RTDB data shapes.
+- **Startup error recovery**: `main()` wraps `AppBootstrapper.boot()` in try/catch. If Firebase init fails (missing `google-services.json`, no network on first launch), `StartupErrorScreen` is shown with a Retry button instead of a silent crash.
+- **Microphone permission UX**: `HomeViewModel.makeCall()` and `answerCall()` check `Permission.microphone.status` before invoking the use case. If denied, `HomeEvent.microphonePermissionDenied` is emitted immediately and the use case is skipped. `HomeScreen` shows "Microphone permission is required. Please enable it in Settings." — a specific, actionable message instead of the generic "Call failed."
 - **`turn_server_selected` key (caller only)**: Named to distinguish the caller's *chosen configuration* (metered / expressturn / both) from the *actual relay type* (stun / direct / turn) determined post-call via `resolveActualTurnUsed()` and stored in the call log. Callee logs no equivalent key — `role=callee` already deterministically implies `both`.
 
 ---
