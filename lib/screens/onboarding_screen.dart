@@ -82,7 +82,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     size: 72, color: Colors.deepPurple),
                 const SizedBox(height: 16),
                 const Text(
-                  'Voice Call POC',
+                  'Family Voice Call',
                   style: TextStyle(
                       fontSize: 26, fontWeight: FontWeight.bold),
                 ),
