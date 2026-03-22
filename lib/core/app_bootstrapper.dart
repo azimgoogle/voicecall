@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../di/service_locator.dart';
+import '../interfaces/remote_config_repository.dart';
 import '../services/foreground_service.dart';
 
 /// Encapsulates all one-time startup tasks that must complete before [runApp].
@@ -43,6 +44,10 @@ abstract final class AppBootstrapper {
 
     setupServiceLocator();
     initForegroundService();
+
+    // Fetch Remote Config values early so they are ready before any call.
+    // fetchAndActivate() never throws — failures fall back to in-app defaults.
+    await sl<RemoteConfigRepository>().fetchAndActivate();
 
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('userId') != null;

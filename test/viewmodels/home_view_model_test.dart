@@ -38,6 +38,7 @@ void main() {
   late MockForegroundService mockForeground;
   late MockCallLogRepository mockLogRepo;
   late MockSettingsRepository mockSettings;
+  late MockRemoteConfigRepository mockRemoteConfig;
   late MockCrashReporter mockCrash;
   late MockAnalyticsRepository mockAnalytics;
 
@@ -61,6 +62,7 @@ void main() {
     mockForeground = MockForegroundService();
     mockLogRepo = MockCallLogRepository();
     mockSettings = MockSettingsRepository();
+    mockRemoteConfig = MockRemoteConfigRepository();
     mockCrash = MockCrashReporter();
     mockAnalytics = MockAnalyticsRepository();
 
@@ -79,6 +81,7 @@ void main() {
       foreground: mockForeground,
       logRepo: mockLogRepo,
       settings: mockSettings,
+      remoteConfig: mockRemoteConfig,
       crash: mockCrash,
       analytics: mockAnalytics,
       connectionLostCtrl: connectionLostCtrl,
@@ -99,6 +102,7 @@ void main() {
       foregroundService: mockForeground,
       crashReporter: mockCrash,
       analytics: mockAnalytics,
+      remoteConfig: mockRemoteConfig,
     );
   });
 
@@ -281,6 +285,33 @@ void main() {
       await vm.makeCall('bob', 'metered');
 
       expect(vm.state, isA<ActiveCall>());
+    });
+
+    test('limit=0 from Remote Config means unlimited — call proceeds even at 999 min',
+        () async {
+      when(() => mockRemoteConfig.getWeeklyCallLimitMinutes()).thenReturn(0);
+      when(() => mockLogRepo.loadLogs())
+          .thenAnswer((_) async => [_logWithMinutes(999)]);
+
+      await vm.makeCall('bob', 'metered');
+
+      expect(vm.state, isA<ActiveCall>());
+    });
+
+    test('Remote Config limit is respected — 500 min limit blocks at 500 min',
+        () async {
+      when(() => mockRemoteConfig.getWeeklyCallLimitMinutes()).thenReturn(500);
+      when(() => mockLogRepo.loadLogs())
+          .thenAnswer((_) async => [_logWithMinutes(500)]);
+
+      final events = <HomeEvent>[];
+      vm.events.listen(events.add);
+
+      await vm.makeCall('bob', 'metered');
+      await Future.microtask(() {});
+
+      expect(events, contains(HomeEvent.weeklyLimitReached));
+      expect(vm.state, isA<Idle>());
     });
   });
 
@@ -559,6 +590,7 @@ void _stubAll({
   required MockForegroundService foreground,
   required MockCallLogRepository logRepo,
   required MockSettingsRepository settings,
+  required MockRemoteConfigRepository remoteConfig,
   required MockCrashReporter crash,
   required MockAnalyticsRepository analytics,
   required StreamController<void> connectionLostCtrl,
@@ -648,6 +680,11 @@ void _stubAll({
   // ── CallLogRepository ─────────────────────────────────────────────────────
   when(() => logRepo.saveEntry(any())).thenAnswer((_) async {});
   when(() => logRepo.loadLogs()).thenAnswer((_) async => []);
+
+  // ── RemoteConfigRepository ────────────────────────────────────────────────
+  // Default: 100 min limit (no unlimited). Tests that need different values
+  // override this stub locally.
+  when(() => remoteConfig.getWeeklyCallLimitMinutes()).thenReturn(100);
 
   // ── SettingsRepository ────────────────────────────────────────────────────
   when(() => settings.isAutoAnswer(any())).thenAnswer((_) async => false);

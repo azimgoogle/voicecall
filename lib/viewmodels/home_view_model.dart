@@ -11,6 +11,7 @@ import '../interfaces/call_log_repository.dart';
 import '../interfaces/crash_reporter.dart';
 import '../interfaces/foreground_service.dart';
 import '../interfaces/peer_connection_service.dart';
+import '../interfaces/remote_config_repository.dart';
 import '../interfaces/settings_repository.dart';
 import '../interfaces/signaling_service.dart';
 import '../models/call_log_entry.dart';
@@ -63,9 +64,7 @@ class HomeViewModel {
   final ForegroundService _foreground;
   final CrashReporter _crashReporter;
   final AnalyticsRepository _analytics;
-
-  /// Maximum call minutes allowed per user per week.
-  static const int weeklyLimitMinutes = 100;
+  final RemoteConfigRepository _remoteConfig;
 
   late final MakeCallUseCase _makeCall;
   late final AnswerCallUseCase _answerCall;
@@ -80,13 +79,15 @@ class HomeViewModel {
     required ForegroundService foregroundService,
     required CrashReporter crashReporter,
     required AnalyticsRepository analytics,
+    required RemoteConfigRepository remoteConfig,
   })  : _signaling = signaling,
         _peerConnection = peerConnection,
         _logRepository = logRepository,
         _settings = settings,
         _foreground = foregroundService,
         _crashReporter = crashReporter,
-        _analytics = analytics {
+        _analytics = analytics,
+        _remoteConfig = remoteConfig {
     _makeCall = MakeCallUseCase(
       signaling: signaling,
       peerConnection: peerConnection,
@@ -182,6 +183,10 @@ class HomeViewModel {
     await _foreground.start();
   }
 
+  /// Returns the current weekly call limit from Remote Config.
+  /// 0 means no limit is enforced.
+  int getWeeklyLimitMinutes() => _remoteConfig.getWeeklyCallLimitMinutes();
+
   /// Returns the last-dialled remote ID from SharedPreferences.
   Future<String> loadLastRemoteId() async {
     final prefs = await SharedPreferences.getInstance();
@@ -215,7 +220,8 @@ class HomeViewModel {
       return;
     }
 
-    if (await getWeeklyUsedMinutes() >= weeklyLimitMinutes) {
+    final weeklyLimit = _remoteConfig.getWeeklyCallLimitMinutes();
+    if (weeklyLimit > 0 && await getWeeklyUsedMinutes() >= weeklyLimit) {
       _emitEvent(HomeEvent.weeklyLimitReached);
       return;
     }
@@ -302,7 +308,8 @@ class HomeViewModel {
       return;
     }
 
-    if (await getWeeklyUsedMinutes() >= weeklyLimitMinutes) {
+    final weeklyLimit = _remoteConfig.getWeeklyCallLimitMinutes();
+    if (weeklyLimit > 0 && await getWeeklyUsedMinutes() >= weeklyLimit) {
       _emitEvent(HomeEvent.weeklyLimitReached);
       return;
     }

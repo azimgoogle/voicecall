@@ -6,12 +6,14 @@ import '../interfaces/call_log_repository.dart';
 import '../interfaces/crash_reporter.dart';
 import '../interfaces/foreground_service.dart';
 import '../interfaces/peer_connection_service.dart';
+import '../interfaces/remote_config_repository.dart';
 import '../interfaces/settings_repository.dart';
 import '../interfaces/signaling_service.dart';
 import '../services/audio_service.dart';
 import '../services/call_log_service.dart';
 import '../services/firebase_analytics_reporter.dart';
 import '../services/firebase_crash_reporter.dart';
+import '../services/firebase_remote_config_service.dart';
 import '../services/firebase_signaling.dart';
 import '../services/foreground_service.dart';
 import '../services/settings_service.dart';
@@ -31,6 +33,7 @@ final GetIt sl = GetIt.instance;
 void setupServiceLocator() {
   sl.registerLazySingleton<CrashReporter>(() => FirebaseCrashReporter());
   sl.registerLazySingleton<AnalyticsRepository>(() => FirebaseAnalyticsReporter());
+  sl.registerLazySingleton<RemoteConfigRepository>(() => FirebaseRemoteConfigService());
 
   sl.registerLazySingleton<SignalingService>(() => FirebaseSignaling());
   sl.registerLazySingleton<PeerConnectionService>(() => WebRtcService());
@@ -50,5 +53,6 @@ void setupServiceLocator() {
         foregroundService: sl<ForegroundService>(),
         crashReporter: sl<CrashReporter>(),
         analytics: sl<AnalyticsRepository>(),
+        remoteConfig: sl<RemoteConfigRepository>(),
       ));
 }

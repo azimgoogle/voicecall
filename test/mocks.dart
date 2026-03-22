@@ -6,6 +6,7 @@ import 'package:family_call/interfaces/call_log_repository.dart';
 import 'package:family_call/interfaces/crash_reporter.dart';
 import 'package:family_call/interfaces/foreground_service.dart';
 import 'package:family_call/interfaces/peer_connection_service.dart';
+import 'package:family_call/interfaces/remote_config_repository.dart';
 import 'package:family_call/interfaces/settings_repository.dart';
 import 'package:family_call/interfaces/signaling_service.dart';
 import 'package:family_call/models/call_log_entry.dart';
@@ -27,6 +28,8 @@ class MockForegroundService extends Mock implements ForegroundService {}
 class MockCallLogRepository extends Mock implements CallLogRepository {}
 
 class MockSettingsRepository extends Mock implements SettingsRepository {}
+
+class MockRemoteConfigRepository extends Mock implements RemoteConfigRepository {}
 
 class MockCrashReporter extends Mock implements CrashReporter {}
 

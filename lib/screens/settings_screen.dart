@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../di/service_locator.dart';
 import '../interfaces/call_log_repository.dart';
+import '../interfaces/remote_config_repository.dart';
 import '../interfaces/settings_repository.dart';
-import '../viewmodels/home_view_model.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,10 +15,12 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _settings = sl<SettingsRepository>();
   final _logService = sl<CallLogRepository>();
+  final _remoteConfig = sl<RemoteConfigRepository>();
 
   int _retentionDays = SettingsRepository.defaultRetentionDays;
   List<String> _whitelist = [];
   int _weeklyUsedMinutes = 0;
+  int _weeklyLimitMinutes = RemoteConfigRepository.defaultWeeklyLimitMinutes;
 
   /// Unique remote user IDs from recent call logs not already in the whitelist.
   List<String> _suggestions = [];
@@ -43,7 +45,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final whitelist = await _settings.getWhitelist();
     final logs = await _logService.loadLogs();
 
-    // Compute weekly usage from logs (current ISO week, Mon–Sun).
+    // Compute weekly usage from outgoing (caller) calls in current ISO week.
     final now = DateTime.now();
     final weekStart = DateTime(now.year, now.month, now.day - (now.weekday - 1));
     final weeklySeconds = logs
@@ -66,6 +68,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _whitelist = List<String>.from(whitelist);
         _suggestions = suggestions;
         _weeklyUsedMinutes = weeklyUsed;
+        _weeklyLimitMinutes = _remoteConfig.getWeeklyCallLimitMinutes();
         _loading = false;
       });
     }
@@ -98,6 +101,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final unlimited = _weeklyLimitMinutes == 0;
+    final atLimit = !unlimited && _weeklyUsedMinutes >= _weeklyLimitMinutes;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: _loading
@@ -105,44 +111,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
           : ListView(
               padding: const EdgeInsets.all(20),
               children: [
-                // ── Weekly Call Usage ───────────────────────────────────
-                Text('Weekly Call Usage',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 4),
-                Text(
-                  'Resets every Monday. Limit: ${HomeViewModel.weeklyLimitMinutes} min/week.',
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
-                ),
-                const SizedBox(height: 12),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: (_weeklyUsedMinutes / HomeViewModel.weeklyLimitMinutes)
-                        .clamp(0.0, 1.0),
-                    minHeight: 8,
-                    backgroundColor: Colors.grey.shade200,
-                    color: _weeklyUsedMinutes >= HomeViewModel.weeklyLimitMinutes
-                        ? Colors.red
-                        : Colors.blue,
+                // ── Weekly Call Usage (hidden when unlimited) ───────────
+                if (!unlimited) ...[
+                  Text('Weekly Call Usage',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Outgoing calls only. Resets every Monday.',
+                    style: TextStyle(color: Colors.grey, fontSize: 13),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '$_weeklyUsedMinutes / ${HomeViewModel.weeklyLimitMinutes} min used',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: _weeklyUsedMinutes >= HomeViewModel.weeklyLimitMinutes
-                        ? Colors.red
-                        : Colors.grey.shade700,
-                    fontWeight: _weeklyUsedMinutes >= HomeViewModel.weeklyLimitMinutes
-                        ? FontWeight.bold
-                        : FontWeight.normal,
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: (_weeklyUsedMinutes / _weeklyLimitMinutes)
+                          .clamp(0.0, 1.0),
+                      minHeight: 8,
+                      backgroundColor: Colors.grey.shade200,
+                      color: atLimit ? Colors.red : Colors.blue,
+                    ),
                   ),
-                ),
-
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 20),
+                  const SizedBox(height: 6),
+                  Text(
+                    '$_weeklyUsedMinutes / $_weeklyLimitMinutes min used',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: atLimit ? Colors.red : Colors.grey.shade700,
+                      fontWeight:
+                          atLimit ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 20),
+                ],
 
                 // ── Call Log Retention ──────────────────────────────────
                 Text('Call Log Retention',

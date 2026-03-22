@@ -232,13 +232,13 @@ lib/
 
 test/
   widget_test.dart                  ← Placeholder (void main {}); no widget tests yet
-  mocks.dart                        ← 8 Mock classes + registerFallbackValues()
+  mocks.dart                        ← 9 Mock classes + registerFallbackValues()
   usecases/
     make_call_usecase_test.dart     ← 12 unit tests
     answer_call_usecase_test.dart   ← 14 unit tests
     end_call_usecase_test.dart      ← 15 unit tests
   viewmodels/
-    home_view_model_test.dart       ← 23 unit tests (incl. fakeAsync timer tests, analytics assertions, mic permission denied, weekly limit)
+    home_view_model_test.dart       ← 25 unit tests (incl. fakeAsync timer tests, analytics assertions, mic permission denied, weekly limit, remote config)
   services/
     call_log_service_test.dart      ← 4 unit tests (JSON round-trip, corrupt data recovery)
 
@@ -261,7 +261,7 @@ flutter pub get                          # install dependencies
 flutter analyze                          # static analysis
 flutter run                              # run on connected Android device/emulator
 flutter build apk                        # build release APK
-flutter test test/                       # run all 71 unit tests
+flutter test test/                       # run all 74 unit tests
 flutter test test/ --reporter=expanded   # verbose per-test output
 ```
 
