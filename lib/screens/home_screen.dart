@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../di/service_locator.dart';
@@ -25,6 +26,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _myUserId = '';
   String _selectedTurnServer = 'both';
+  bool _micPermissionDenied = false;
 
   late StreamSubscription<HomeEvent> _eventsSub;
 
@@ -61,6 +63,11 @@ class _HomeScreenState extends State<HomeScreen> {
     await _viewModel.init(userId);
     FlutterForegroundTask.addTaskDataCallback(_onForegroundData);
     _eventsSub = _viewModel.events.listen(_onEvent);
+
+    final micStatus = await Permission.microphone.status;
+    if (mounted && !micStatus.isGranted) {
+      setState(() => _micPermissionDenied = true);
+    }
   }
 
   /// Receives action IDs forwarded from the foreground notification buttons.
@@ -200,6 +207,16 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _requestMicPermission() async {
+    final status = await Permission.microphone.request();
+    if (!mounted) return;
+    if (status.isGranted) {
+      setState(() => _micPermissionDenied = false);
+    } else if (status.isPermanentlyDenied) {
+      await openAppSettings();
+    }
+  }
+
   Widget _buildIdle() {
     return Scaffold(
       appBar: AppBar(
@@ -223,14 +240,18 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('My ID: $_myUserId',
-                style: const TextStyle(fontSize: 18)),
-            const SizedBox(height: 32),
+      body: Column(
+        children: [
+          if (_micPermissionDenied) _buildMicPermissionBanner(),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('My ID: $_myUserId',
+                      style: const TextStyle(fontSize: 18)),
+                  const SizedBox(height: 32),
             TextField(
               controller: _remoteIdController,
               decoration: const InputDecoration(
@@ -265,22 +286,43 @@ class _HomeScreenState extends State<HomeScreen> {
                 setState(() => _selectedTurnServer = selection.first);
               },
             ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _remoteIdController.text.trim().isNotEmpty
-                    ? () => _viewModel.makeCall(
-                          _remoteIdController.text.trim(),
-                          _selectedTurnServer,
-                        )
-                    : null,
-                child: const Text('Call'),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _remoteIdController.text.trim().isNotEmpty
+                          ? () => _viewModel.makeCall(
+                                _remoteIdController.text.trim(),
+                                _selectedTurnServer,
+                              )
+                          : null,
+                      child: const Text('Call'),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildMicPermissionBanner() {
+    return MaterialBanner(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      leading: const Icon(Icons.mic_off, color: Colors.white),
+      backgroundColor: Colors.red.shade700,
+      content: const Text(
+        'Microphone access is required to make and receive calls.',
+        style: TextStyle(color: Colors.white),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _requestMicPermission,
+          child: const Text('Grant', style: TextStyle(color: Colors.white)),
+        ),
+      ],
     );
   }
 }
