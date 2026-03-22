@@ -8,6 +8,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Handler
@@ -21,22 +23,34 @@ class MainActivity : FlutterActivity() {
 
     private val channelName = "com.familycall/audio"
     private lateinit var audioManager: AudioManager
-    private var headsetReceiver: BroadcastReceiver? = null
+    private var noisyReceiver: BroadcastReceiver? = null
+    private var scoReceiver: BroadcastReceiver? = null
     private var audioFocusRequest: AudioFocusRequest? = null
+    private var audioSessionActive = false
 
     private lateinit var powerManager: PowerManager
     private lateinit var sensorManager: SensorManager
     private var proximitySensor: Sensor? = null
     private var proximityWakeLock: PowerManager.WakeLock? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Fires immediately on registerAudioDeviceCallback with all currently-connected
+    // devices — this handles the "already connected at call start" case reliably.
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
+            if (audioSessionActive) applyCurrentRouting()
+        }
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) {
+            if (audioSessionActive) applyCurrentRouting()
+        }
+    }
+
     private val proximityListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             val near = event.values[0] < (proximitySensor?.maximumRange ?: 5f)
             mainHandler.post {
-                // Only switch speaker/earpiece if no wired headset is connected.
-                // When headphones are plugged in, Android routes to them regardless
-                // of isSpeakerphoneOn, so we leave it alone to avoid interfering.
-                if (!isWiredHeadsetOn()) {
+                // Only switch speaker/earpiece when no headset of any kind is connected.
+                if (!isAnyHeadsetConnected()) {
                     audioManager.isSpeakerphoneOn = !near
                 }
             }
@@ -62,19 +76,24 @@ class MainActivity : FlutterActivity() {
                             .build()
                         audioFocusRequest = focusRequest
                         audioManager.requestAudioFocus(focusRequest)
-                        registerHeadsetReceiver()
-                        // Post routing after the mode change has settled.
-                        // Calling setSpeakerphoneOn synchronously here races with
-                        // MODE_IN_COMMUNICATION taking effect and silently loses.
-                        mainHandler.post {
-                            audioManager.isSpeakerphoneOn = !isWiredHeadsetOn()
-                        }
+
+                        audioSessionActive = true
+                        // AudioDeviceCallback fires immediately with all currently-connected
+                        // output devices, so already-connected headphones are handled here
+                        // without needing to rely on a sticky broadcast.
+                        audioManager.registerAudioDeviceCallback(audioDeviceCallback, mainHandler)
+                        registerNoisyReceiver()
+                        registerScoReceiver()
                         result.success(null)
                     }
                     "stopAudioSession" -> {
-                        unregisterHeadsetReceiver()
+                        audioSessionActive = false
+                        audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
+                        unregisterNoisyReceiver()
+                        unregisterScoReceiver()
                         audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
                         audioFocusRequest = null
+                        audioManager.stopBluetoothSco()
                         audioManager.isSpeakerphoneOn = false
                         audioManager.mode = AudioManager.MODE_NORMAL
                         result.success(null)
@@ -101,11 +120,7 @@ class MainActivity : FlutterActivity() {
                         val wl = proximityWakeLock
                         if (wl != null && wl.isHeld) wl.release()
                         proximityWakeLock = null
-                        // Restore routing — headset stays routed to headset,
-                        // no headset means back to speaker
-                        mainHandler.post {
-                            audioManager.isSpeakerphoneOn = !isWiredHeadsetOn()
-                        }
+                        mainHandler.post { applyCurrentRouting() }
                         result.success(null)
                     }
                     else -> result.notImplemented()
@@ -113,42 +128,82 @@ class MainActivity : FlutterActivity() {
             }
     }
 
-    private fun isWiredHeadsetOn(): Boolean {
-        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        return devices.any {
-            it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-            it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES
+    // Single place that decides how audio is routed.
+    // Priority: Bluetooth SCO > wired/USB headset > speaker.
+    private fun applyCurrentRouting() {
+        when {
+            isBluetoothHeadsetConnected() -> {
+                audioManager.isSpeakerphoneOn = false
+                audioManager.startBluetoothSco()
+            }
+            isWiredHeadsetConnected() -> {
+                audioManager.stopBluetoothSco()
+                audioManager.isSpeakerphoneOn = false
+            }
+            else -> {
+                audioManager.stopBluetoothSco()
+                audioManager.isSpeakerphoneOn = true
+            }
         }
     }
 
-    private fun registerHeadsetReceiver() {
-        if (headsetReceiver != null) return
-        headsetReceiver = object : BroadcastReceiver() {
+    private fun isWiredHeadsetConnected(): Boolean {
+        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        return devices.any {
+            it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+            it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+            it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+        }
+    }
+
+    private fun isBluetoothHeadsetConnected(): Boolean {
+        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        return devices.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+    }
+
+    private fun isAnyHeadsetConnected() = isWiredHeadsetConnected() || isBluetoothHeadsetConnected()
+
+    // Handles abrupt headset removal — fires before getDevices() reflects the removal,
+    // so we keep this receiver in addition to AudioDeviceCallback.
+    private fun registerNoisyReceiver() {
+        if (noisyReceiver != null) return
+        noisyReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                when (intent.action) {
-                    AudioManager.ACTION_HEADSET_PLUG -> {
-                        val state = intent.getIntExtra("state", -1)
-                        // state 1 = plugged in, 0 = unplugged
-                        audioManager.isSpeakerphoneOn = (state != 1)
+                if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                    audioManager.isSpeakerphoneOn = true
+                }
+            }
+        }
+        registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+    }
+
+    private fun unregisterNoisyReceiver() {
+        noisyReceiver?.let { unregisterReceiver(it); noisyReceiver = null }
+    }
+
+    // Tracks Bluetooth SCO connection state so we can confirm routing once
+    // SCO is actually established (startBluetoothSco is asynchronous).
+    private fun registerScoReceiver() {
+        if (scoReceiver != null) return
+        scoReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (intent.action != AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED) return
+                when (intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)) {
+                    AudioManager.SCO_AUDIO_STATE_CONNECTED -> {
+                        audioManager.isSpeakerphoneOn = false
                     }
-                    AudioManager.ACTION_AUDIO_BECOMING_NOISY -> {
-                        // Headset removed abruptly — route to speaker
-                        audioManager.isSpeakerphoneOn = true
+                    AudioManager.SCO_AUDIO_STATE_DISCONNECTED -> {
+                        if (!isWiredHeadsetConnected()) {
+                            audioManager.isSpeakerphoneOn = true
+                        }
                     }
                 }
             }
         }
-        val filter = IntentFilter().apply {
-            addAction(AudioManager.ACTION_HEADSET_PLUG)
-            addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
-        }
-        registerReceiver(headsetReceiver, filter)
+        registerReceiver(scoReceiver, IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED))
     }
 
-    private fun unregisterHeadsetReceiver() {
-        headsetReceiver?.let {
-            unregisterReceiver(it)
-            headsetReceiver = null
-        }
+    private fun unregisterScoReceiver() {
+        scoReceiver?.let { unregisterReceiver(it); scoReceiver = null }
     }
 }

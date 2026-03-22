@@ -1,4 +1,4 @@
-# Voice Call POC
+# Voice Call
 
 Minimal 1-to-1 audio calling app using WebRTC + Firebase Realtime Database for signaling. Android only.
 
