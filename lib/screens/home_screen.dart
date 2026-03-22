@@ -6,6 +6,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../di/service_locator.dart';
+import '../interfaces/call_log_repository.dart';
+import '../interfaces/remote_config_repository.dart';
+import '../models/call_log_entry.dart';
 import '../models/call_state.dart';
 import '../viewmodels/home_view_model.dart';
 import 'call_logs_screen.dart';
@@ -23,10 +26,15 @@ class _HomeScreenState extends State<HomeScreen> {
   late final HomeViewModel _viewModel;
   final _remoteIdController = TextEditingController();
   final _callScreenKey = GlobalKey<CallScreenState>();
+  final _logRepository = sl<CallLogRepository>();
+  final _remoteConfig = sl<RemoteConfigRepository>();
+  final _inputFocusNode = FocusNode();
 
   String _myUserId = '';
   String _selectedTurnServer = 'both';
   bool _micPermissionDenied = false;
+  bool _turnSelectorEnabled = false;
+  List<CallLogEntry> _recentContacts = [];
 
   late StreamSubscription<HomeEvent> _eventsSub;
 
@@ -60,6 +68,22 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
+    // Load most recent log entry per unique remote user (newest first, max 5).
+    final logs = await _logRepository.loadLogs();
+    final seen = <String>{};
+    final recent = <CallLogEntry>[];
+    for (final log in logs.reversed) {
+      if (seen.add(log.remoteUserId) && recent.length < 5) {
+        recent.add(log);
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _recentContacts = recent;
+        _turnSelectorEnabled = _remoteConfig.isTurnSelectorEnabled();
+      });
+    }
+
     await _viewModel.init(userId);
     FlutterForegroundTask.addTaskDataCallback(_onForegroundData);
     _eventsSub = _viewModel.events.listen(_onEvent);
@@ -68,6 +92,12 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted && !micStatus.isGranted) {
       setState(() => _micPermissionDenied = true);
     }
+
+    // Request focus after all setState calls have settled so that no subsequent
+    // rebuild dismisses the keyboard again.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _inputFocusNode.requestFocus();
+    });
   }
 
   /// Receives action IDs forwarded from the foreground notification buttons.
@@ -132,9 +162,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case HomeEvent.weeklyLimitReached:
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text(
-              'Weekly call limit (100 min) reached. Resets on Monday.',
-            ),
+            content: Text('Weekly call limit reached. Resets on Monday.'),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 4),
           ));
@@ -146,6 +174,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _eventsSub.cancel();
     _remoteIdController.dispose();
+    _inputFocusNode.dispose();
     FlutterForegroundTask.removeTaskDataCallback(_onForegroundData);
     _viewModel.dispose();
     super.dispose();
@@ -228,6 +257,14 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _makeCallTo(String remoteId) {
+    if (remoteId.isEmpty) return;
+    _remoteIdController.text = remoteId;
+    _viewModel.makeCall(remoteId, _selectedTurnServer);
+  }
+
+  // ── Idle screen ────────────────────────────────────────────────────────────
+
   Widget _buildIdle() {
     return Scaffold(
       appBar: AppBar(
@@ -254,62 +291,81 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Column(
         children: [
           if (_micPermissionDenied) _buildMicPermissionBanner(),
+
+          // Scrollable content — recent list can grow to 5 items.
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('My ID: $_myUserId',
                       style: const TextStyle(fontSize: 18)),
                   const SizedBox(height: 32),
-            TextField(
-              controller: _remoteIdController,
-              decoration: const InputDecoration(
-                labelText: 'Remote User ID',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text('TURN Server',
-                style: TextStyle(fontSize: 14, color: Colors.grey)),
-            const SizedBox(height: 8),
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                  value: 'metered',
-                  label: Text('Metered'),
-                  icon: Icon(Icons.cloud),
-                ),
-                ButtonSegment(
-                  value: 'both',
-                  label: Text('Both'),
-                  icon: Icon(Icons.merge_type),
-                ),
-                ButtonSegment(
-                  value: 'expressturn',
-                  label: Text('ExpressTURN'),
-                  icon: Icon(Icons.swap_horiz),
-                ),
-              ],
-              selected: {_selectedTurnServer},
-              onSelectionChanged: (selection) {
-                setState(() => _selectedTurnServer = selection.first);
-              },
-            ),
-                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _remoteIdController,
+                    focusNode: _inputFocusNode,
+                    textInputAction: TextInputAction.go,
+                    onSubmitted: (value) => _makeCallTo(value.trim()),
+                    decoration: const InputDecoration(
+                      labelText: 'Call someone',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: _remoteIdController.text.trim().isNotEmpty
-                          ? () => _viewModel.makeCall(
-                                _remoteIdController.text.trim(),
-                                _selectedTurnServer,
-                              )
+                          ? () => _makeCallTo(_remoteIdController.text.trim())
                           : null,
                       child: const Text('Call'),
                     ),
                   ),
+                  if (_recentContacts.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    const Text(
+                      'RECENT',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    ..._recentContacts.map(_buildRecentContactTile),
+                  ],
+                  if (_turnSelectorEnabled) ...[
+                    const SizedBox(height: 24),
+                    const Text('TURN Server',
+                        style: TextStyle(fontSize: 14, color: Colors.grey)),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                          value: 'metered',
+                          label: Text('Metered'),
+                          icon: Icon(Icons.cloud),
+                        ),
+                        ButtonSegment(
+                          value: 'both',
+                          label: Text('Both'),
+                          icon: Icon(Icons.merge_type),
+                        ),
+                        ButtonSegment(
+                          value: 'expressturn',
+                          label: Text('ExpressTURN'),
+                          icon: Icon(Icons.swap_horiz),
+                        ),
+                      ],
+                      selected: {_selectedTurnServer},
+                      onSelectionChanged: (selection) {
+                        setState(() => _selectedTurnServer = selection.first);
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 24),
                 ],
               ),
             ),
@@ -318,6 +374,113 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  // ── Recent contact tile ───────────────────────────────────────────────────
+
+  Widget _buildRecentContactTile(CallLogEntry entry) {
+    final isOutgoing = entry.isCaller;
+    return InkWell(
+      onTap: () => _makeCallTo(entry.remoteUserId),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: Colors.deepPurple.shade100,
+              child: Text(
+                entry.remoteUserId[0].toUpperCase(),
+                style: TextStyle(
+                  color: Colors.deepPurple.shade700,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.remoteUserId,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_formatCallDate(entry.startedAt)} · ${_formatDuration(entry.duration)}',
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildDirectionBadge(isOutgoing),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDirectionBadge(bool isOutgoing) {
+    final color = isOutgoing ? Colors.green : Colors.blue;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.shade300),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isOutgoing ? Icons.call_made : Icons.call_received,
+            size: 14,
+            color: color.shade700,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            isOutgoing ? 'Outgoing' : 'Incoming',
+            style: TextStyle(
+              fontSize: 12,
+              color: color.shade700,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Formatting helpers ────────────────────────────────────────────────────
+
+  String _formatCallDate(DateTime dt) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final date = DateTime(dt.year, dt.month, dt.day);
+
+    if (date == today) return 'Today';
+    if (date == yesterday) return 'Yesterday';
+
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${weekdays[dt.weekday - 1]}, ${dt.day} ${months[dt.month - 1]}';
+  }
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes;
+    final s = d.inSeconds.remainder(60);
+    return '$m min ${s.toString().padLeft(2, '0')} sec';
+  }
+
+  // ── Mic permission banner ─────────────────────────────────────────────────
 
   Widget _buildMicPermissionBanner() {
     return MaterialBanner(
