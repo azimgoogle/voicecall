@@ -38,6 +38,9 @@ enum HomeEvent {
 
   /// Microphone permission was not granted; user needs to enable it in Settings.
   microphonePermissionDenied,
+
+  /// The user has consumed their 100-minute weekly call allowance.
+  weeklyLimitReached,
 }
 
 /// Orchestrates the entire call lifecycle for [HomeScreen].
@@ -55,10 +58,14 @@ enum HomeEvent {
 class HomeViewModel {
   final SignalingService _signaling;
   final PeerConnectionService _peerConnection;
+  final CallLogRepository _logRepository;
   final SettingsRepository _settings;
   final ForegroundService _foreground;
   final CrashReporter _crashReporter;
   final AnalyticsRepository _analytics;
+
+  /// Maximum call minutes allowed per user per week.
+  static const int weeklyLimitMinutes = 100;
 
   late final MakeCallUseCase _makeCall;
   late final AnswerCallUseCase _answerCall;
@@ -75,6 +82,7 @@ class HomeViewModel {
     required AnalyticsRepository analytics,
   })  : _signaling = signaling,
         _peerConnection = peerConnection,
+        _logRepository = logRepository,
         _settings = settings,
         _foreground = foregroundService,
         _crashReporter = crashReporter,
@@ -180,6 +188,20 @@ class HomeViewModel {
     return prefs.getString('last_remote_id') ?? '';
   }
 
+  /// Returns the total call minutes used in the current ISO week (Mon–Sun).
+  ///
+  /// Loads call logs and sums durations for entries whose [startedAt] falls
+  /// on or after the most recent Monday at midnight.
+  Future<int> getWeeklyUsedMinutes() async {
+    final now = DateTime.now();
+    final weekStart = DateTime(now.year, now.month, now.day - (now.weekday - 1));
+    final logs = await _logRepository.loadLogs();
+    final totalSeconds = logs
+        .where((e) => e.role == 'caller' && !e.startedAt.isBefore(weekStart))
+        .fold<int>(0, (sum, e) => sum + e.duration.inSeconds);
+    return totalSeconds ~/ 60;
+  }
+
   /// Initiates an outgoing call to [remoteId] using [turnServer].
   ///
   /// Delegates all I/O to [MakeCallUseCase]; then subscribes to the
@@ -190,6 +212,11 @@ class HomeViewModel {
 
     if (!(await Permission.microphone.status).isGranted) {
       _emitEvent(HomeEvent.microphonePermissionDenied);
+      return;
+    }
+
+    if (await getWeeklyUsedMinutes() >= weeklyLimitMinutes) {
+      _emitEvent(HomeEvent.weeklyLimitReached);
       return;
     }
 
@@ -272,6 +299,11 @@ class HomeViewModel {
   Future<void> answerCall(String callId) async {
     if (!(await Permission.microphone.status).isGranted) {
       _emitEvent(HomeEvent.microphonePermissionDenied);
+      return;
+    }
+
+    if (await getWeeklyUsedMinutes() >= weeklyLimitMinutes) {
+      _emitEvent(HomeEvent.weeklyLimitReached);
       return;
     }
 

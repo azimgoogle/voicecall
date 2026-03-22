@@ -128,6 +128,17 @@ class _HomeScreenState extends State<HomeScreen> {
             duration: Duration(seconds: 4),
           ));
         }
+
+      case HomeEvent.weeklyLimitReached:
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+              'Weekly call limit (100 min) reached. Resets on Monday.',
+            ),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ));
+        }
     }
   }
 

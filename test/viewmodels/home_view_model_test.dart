@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:family_call/models/call_log_entry.dart';
 import 'package:family_call/models/call_state.dart';
 import 'package:family_call/models/ice_candidate_model.dart';
 import 'package:family_call/models/session_description.dart';
@@ -195,6 +196,91 @@ void main() {
             isCaller: any(named: 'isCaller'),
             turnServer: any(named: 'turnServer'),
           ));
+    });
+  });
+
+  // ── weekly call limit ─────────────────────────────────────────────────────
+
+  group('weekly call limit', () {
+    /// Builds a [CallLogEntry] whose duration equals [minutes] minutes,
+    /// starting at [startedAt] (defaults to today so it falls in this week).
+    CallLogEntry _logWithMinutes(int minutes,
+        {DateTime? startedAt, String role = 'caller'}) {
+      final start = startedAt ?? DateTime.now();
+      return CallLogEntry(
+        callId: 'x_y_1',
+        role: role,
+        remoteUserId: 'y',
+        turnServer: 'both',
+        startedAt: start,
+        endedAt: start.add(Duration(minutes: minutes)),
+      );
+    }
+
+    test('makeCall emits weeklyLimitReached and stays Idle when limit exceeded',
+        () async {
+      when(() => mockLogRepo.loadLogs())
+          .thenAnswer((_) async => [_logWithMinutes(100)]);
+
+      final events = <HomeEvent>[];
+      vm.events.listen(events.add);
+
+      await vm.makeCall('bob', 'metered');
+      await Future.microtask(() {});
+
+      expect(events, contains(HomeEvent.weeklyLimitReached));
+      expect(vm.state, isA<Idle>());
+      verifyNever(() => mockPc.init(
+            isCaller: any(named: 'isCaller'),
+            turnServer: any(named: 'turnServer'),
+          ));
+    });
+
+    test('answerCall emits weeklyLimitReached and stays Idle when limit exceeded',
+        () async {
+      when(() => mockLogRepo.loadLogs())
+          .thenAnswer((_) async => [_logWithMinutes(100)]);
+
+      final events = <HomeEvent>[];
+      vm.events.listen(events.add);
+
+      await vm.answerCall('alice_bob_1000');
+      await Future.microtask(() {});
+
+      expect(events, contains(HomeEvent.weeklyLimitReached));
+      expect(vm.state, isA<Idle>());
+      verifyNever(() => mockPc.init(isCaller: any(named: 'isCaller')));
+    });
+
+    test('makeCall proceeds normally when usage is below limit', () async {
+      when(() => mockLogRepo.loadLogs())
+          .thenAnswer((_) async => [_logWithMinutes(99)]);
+
+      await vm.makeCall('bob', 'metered');
+
+      expect(vm.state, isA<ActiveCall>());
+    });
+
+    test('logs from a previous week are not counted toward the limit', () async {
+      // A log starting 8 days ago is outside the current ISO week.
+      final oldStart = DateTime.now().subtract(const Duration(days: 8));
+      when(() => mockLogRepo.loadLogs())
+          .thenAnswer((_) async => [_logWithMinutes(100, startedAt: oldStart)]);
+
+      await vm.makeCall('bob', 'metered');
+
+      expect(vm.state, isA<ActiveCall>());
+    });
+
+    test('callee (received) call minutes are not counted toward the limit',
+        () async {
+      // 100 min as callee — should not trigger the limit.
+      when(() => mockLogRepo.loadLogs())
+          .thenAnswer((_) async => [_logWithMinutes(100, role: 'callee')]);
+
+      await vm.makeCall('bob', 'metered');
+
+      expect(vm.state, isA<ActiveCall>());
     });
   });
 

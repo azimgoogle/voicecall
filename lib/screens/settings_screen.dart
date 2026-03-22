@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../di/service_locator.dart';
 import '../interfaces/call_log_repository.dart';
 import '../interfaces/settings_repository.dart';
+import '../viewmodels/home_view_model.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -17,6 +18,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   int _retentionDays = SettingsRepository.defaultRetentionDays;
   List<String> _whitelist = [];
+  int _weeklyUsedMinutes = 0;
 
   /// Unique remote user IDs from recent call logs not already in the whitelist.
   List<String> _suggestions = [];
@@ -41,6 +43,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final whitelist = await _settings.getWhitelist();
     final logs = await _logService.loadLogs();
 
+    // Compute weekly usage from logs (current ISO week, Mon–Sun).
+    final now = DateTime.now();
+    final weekStart = DateTime(now.year, now.month, now.day - (now.weekday - 1));
+    final weeklySeconds = logs
+        .where((e) => e.role == 'caller' && !e.startedAt.isBefore(weekStart))
+        .fold<int>(0, (sum, e) => sum + e.duration.inSeconds);
+    final weeklyUsed = weeklySeconds ~/ 60;
+
     // Unique remote user IDs from logs, excluding those already whitelisted.
     final seen = <String>{};
     final suggestions = <String>[];
@@ -55,6 +65,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _retentionDays = days;
         _whitelist = List<String>.from(whitelist);
         _suggestions = suggestions;
+        _weeklyUsedMinutes = weeklyUsed;
         _loading = false;
       });
     }
@@ -94,6 +105,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
           : ListView(
               padding: const EdgeInsets.all(20),
               children: [
+                // ── Weekly Call Usage ───────────────────────────────────
+                Text('Weekly Call Usage',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  'Resets every Monday. Limit: ${HomeViewModel.weeklyLimitMinutes} min/week.',
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: (_weeklyUsedMinutes / HomeViewModel.weeklyLimitMinutes)
+                        .clamp(0.0, 1.0),
+                    minHeight: 8,
+                    backgroundColor: Colors.grey.shade200,
+                    color: _weeklyUsedMinutes >= HomeViewModel.weeklyLimitMinutes
+                        ? Colors.red
+                        : Colors.blue,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '$_weeklyUsedMinutes / ${HomeViewModel.weeklyLimitMinutes} min used',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: _weeklyUsedMinutes >= HomeViewModel.weeklyLimitMinutes
+                        ? Colors.red
+                        : Colors.grey.shade700,
+                    fontWeight: _weeklyUsedMinutes >= HomeViewModel.weeklyLimitMinutes
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 20),
+
                 // ── Call Log Retention ──────────────────────────────────
                 Text('Call Log Retention',
                     style: Theme.of(context).textTheme.titleMedium),
