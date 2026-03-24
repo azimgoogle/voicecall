@@ -134,6 +134,7 @@ class HomeViewModel {
   // ── Private state ─────────────────────────────────────────────────────────
 
   String _userId = '';
+  String _userHandle = '';
   double _defaultVolume = 1.0;
 
   CallLogEntry? _currentLogEntry;
@@ -170,9 +171,10 @@ class HomeViewModel {
   /// Must be called once after construction. Requests mic permission,
   /// loads persisted prefs, starts the incoming-call listener, and
   /// starts the foreground service.
-  Future<void> init(String userId) async {
+  Future<void> init(String userId, String userHandle) async {
     await Permission.microphone.request();
     _userId = userId;
+    _userHandle = userHandle;
     await _crashReporter.setUserIdentifier(userId);
     unawaited(_analytics.setUserId(userId));
 
@@ -207,25 +209,25 @@ class HomeViewModel {
     return totalSeconds ~/ 60;
   }
 
-  /// Initiates an outgoing call to [remoteEmail] using [turnServer].
+  /// Initiates an outgoing call to [remoteHandle] using [turnServer].
   ///
-  /// [remoteEmail] is the recipient's email address. It is resolved to a
-  /// Firebase UID via the /emailToUid RTDB index before the call is set up.
-  /// Emits [HomeEvent.callSetupFailed] if the email is not found.
+  /// [remoteHandle] is the recipient's display handle (e.g. email address).
+  /// It is resolved to a Firebase UID before the call is set up.
+  /// Emits [HomeEvent.callSetupFailed] if the handle is not found.
   ///
   /// Delegates all I/O to [MakeCallUseCase]; then subscribes to the
   /// per-call connection-event streams exposed by [PeerConnectionService].
   /// Emits [HomeEvent.callSetupFailed] and resets to [Idle] on [Err].
-  Future<void> makeCall(String remoteEmail, String turnServer) async {
-    if (remoteEmail.isEmpty) return;
+  Future<void> makeCall(String remoteHandle, String turnServer) async {
+    if (remoteHandle.isEmpty) return;
 
     if (!(await Permission.microphone.status).isGranted) {
       _emitEvent(HomeEvent.microphonePermissionDenied);
       return;
     }
 
-    // Resolve email → UID. Emit failure immediately if not registered.
-    final remoteId = await _signaling.lookupUidByEmail(remoteEmail);
+    // Resolve handle → UID. Emit failure immediately if not registered.
+    final remoteId = await _signaling.lookupUidByHandle(remoteHandle);
     if (remoteId == null) {
       _emitEvent(HomeEvent.callSetupFailed);
       return;
@@ -247,6 +249,8 @@ class HomeViewModel {
     final result = await _makeCall.execute(
       callerId: _userId,
       remoteId: remoteId,
+      callerHandle: _userHandle,
+      remoteHandle: remoteHandle,
       turnServer: turnServer,
       initialVolume: _defaultVolume,
     );
@@ -282,7 +286,7 @@ class HomeViewModel {
 
         _emit(ActiveCall(
           isCaller: true,
-          remoteUserId: remoteEmail,
+          remoteUserId: remoteHandle,
           callId: value.callId,
           startedAt: value.startedAt,
           turnServer: turnServer,
@@ -338,11 +342,9 @@ class HomeViewModel {
           _onCallEnded();
         });
 
-        final parts = callId.split('_');
-        final remoteUserId = parts.length >= 2 ? parts[0] : callId;
         _emit(ActiveCall(
           isCaller: false,
-          remoteUserId: remoteUserId,
+          remoteUserId: value.remoteUserId,
           callId: callId,
           startedAt: _currentLogEntry!.startedAt,
           turnServer: 'both',
@@ -490,14 +492,15 @@ class HomeViewModel {
         return;
       }
 
-      final autoAnswer = await _settings.isAutoAnswer(callerUid);
+      // Resolve UID → email first; used for both display and whitelist check.
+      final callerDisplay =
+          await _signaling.lookupHandleByUid(callerUid) ?? callerUid;
+
+      // Whitelist stores emails — check against the resolved email.
+      final autoAnswer = await _settings.isAutoAnswer(callerDisplay);
       unawaited(_analytics.logEvent('incoming_call_received', parameters: {
         'auto_answer_eligible': autoAnswer,
       }));
-
-      // Resolve UID → email for a human-readable caller display name.
-      final callerDisplay =
-          await _signaling.lookupEmailByUid(callerUid) ?? callerUid;
 
       if (autoAnswer) {
         unawaited(_analytics.logEvent('incoming_call_auto_answered'));

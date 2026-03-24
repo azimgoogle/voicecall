@@ -37,12 +37,20 @@ class FirebaseSignaling implements SignalingService {
     required SessionDescription offer,
     required String caller,
     required String callee,
+    required String callerHandle,
   }) async {
     await _db.child('calls/$callId').set({
       'offer': {'sdp': offer.sdp, 'type': offer.type},
       'caller': caller,
       'callee': callee,
+      'callerHandle': callerHandle,
     });
+  }
+
+  @override
+  Future<String?> readCallerHandle(String callId) async {
+    final snap = await _db.child('calls/$callId/callerHandle').get();
+    return snap.exists ? snap.value as String? : null;
   }
 
   @override
@@ -190,14 +198,14 @@ class FirebaseSignaling implements SignalingService {
   // ── Identity ──────────────────────────────────────────────────────────────
 
   @override
-  Future<String?> lookupUidByEmail(String email) async {
-    final encoded = email.replaceAll('.', ',');
+  Future<String?> lookupUidByHandle(String handle) async {
+    final encoded = handle.replaceAll('.', ',');
     final snap = await _db.child('emailToUid/$encoded').get();
     return snap.exists ? snap.value as String? : null;
   }
 
   @override
-  Future<String?> lookupEmailByUid(String uid) async {
+  Future<String?> lookupHandleByUid(String uid) async {
     final snap = await _db.child('userProfiles/$uid/email').get();
     return snap.exists ? snap.value as String? : null;
   }

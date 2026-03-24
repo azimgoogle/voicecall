@@ -43,8 +43,12 @@ class AnswerCallUseCase {
       _crashReporter.log('answerCall: init peerConnection');
       await _peerConnection.init(isCaller: false);
 
+      // Read caller's handle stored in the call record.
+      // Falls back to the UID parsed from callId if not present (legacy calls).
+      final callerHandle = await _signaling.readCallerHandle(callId);
       final parts = callId.split('_');
-      final remoteUserId = parts.length >= 2 ? parts[0] : callId;
+      final remoteUserId =
+          callerHandle ?? (parts.length >= 2 ? parts[0] : callId);
 
       final logEntry = CallLogEntry(
         callId: callId,

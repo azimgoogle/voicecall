@@ -58,6 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     final userId = firebaseUser.uid;
+    final userHandle = firebaseUser.email ?? userId;
 
     final lastRemoteId = await _viewModel.loadLastRemoteId();
 
@@ -84,7 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
-    await _viewModel.init(userId);
+    await _viewModel.init(userId, userHandle);
     FlutterForegroundTask.addTaskDataCallback(_onForegroundData);
     _eventsSub = _viewModel.events.listen(_onEvent);
 
@@ -322,7 +323,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     textInputAction: TextInputAction.go,
                     onSubmitted: (value) => _makeCallTo(value.trim()),
                     decoration: const InputDecoration(
-                      labelText: 'Enter email to call',
+                      labelText: 'Enter handle to call',
                       border: OutlineInputBorder(),
                     ),
                   ),

@@ -41,6 +41,11 @@ class MakeCallUseCase {
 
   /// Initiates a call from [callerId] to [remoteId] using [turnServer].
   ///
+  /// [callerHandle] is the current user's display handle — stored in the call
+  /// record so the callee can read it when logging the call.
+  /// [remoteHandle] is the recipient's display handle — stored directly in the
+  /// log entry so no post-hoc UID→handle lookup is needed.
+  ///
   /// Returns [Ok] carrying the new [CallLogEntry] on success, or [Err] carrying
   /// an [AppError] if any step fails. On failure the caller should treat the
   /// call as not started and reset UI state accordingly.
@@ -51,19 +56,21 @@ class MakeCallUseCase {
   Future<Result<CallLogEntry, AppError>> execute({
     required String callerId,
     required String remoteId,
+    required String callerHandle,
+    required String remoteHandle,
     required String turnServer,
     required double initialVolume,
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_lastRemoteIdKey, remoteId);
+      await prefs.setString(_lastRemoteIdKey, remoteHandle);
       await prefs.setBool(_callMuteKey, false);
 
       final callId = _signaling.generateCallId(callerId, remoteId);
       final logEntry = CallLogEntry(
         callId: callId,
         role: 'caller',
-        remoteUserId: remoteId,
+        remoteUserId: remoteHandle,
         turnServer: turnServer,
         startedAt: DateTime.now(),
       );
@@ -95,7 +102,11 @@ class MakeCallUseCase {
 
       _crashReporter.log('makeCall: writing offer to Firebase');
       await _signaling.writeOffer(
-          callId: callId, offer: offer, caller: callerId, callee: remoteId);
+          callId: callId,
+          offer: offer,
+          caller: callerId,
+          callee: remoteId,
+          callerHandle: callerHandle);
 
       _crashReporter.log('makeCall: notifying callee');
       await _signaling.notifyRemoteUser(remoteId, callId);

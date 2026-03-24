@@ -24,7 +24,12 @@ class _CallLogsScreenState extends State<CallLogsScreen> {
 
   Future<void> _loadLogs() async {
     final logs = await _service.loadLogs();
-    if (mounted) setState(() { _logs = logs; _loading = false; });
+    if (mounted) {
+      setState(() {
+        _logs = logs;
+        _loading = false;
+      });
+    }
   }
 
   Future<void> _confirmClear() async {

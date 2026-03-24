@@ -53,7 +53,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .fold<int>(0, (sum, e) => sum + e.duration.inSeconds);
     final weeklyUsed = weeklySeconds ~/ 60;
 
-    // Unique remote user IDs from logs, excluding those already whitelisted.
+    // Unique remote handles from logs, excluding those already whitelisted.
     final seen = <String>{};
     final suggestions = <String>[];
     for (final log in logs) {
@@ -175,7 +175,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 4),
                 const Text(
-                  'Calls from these IDs are answered automatically. '
+                  'Calls from these handle addresses are answered automatically. '
                   'All others show an Answer button.',
                   style: TextStyle(color: Colors.grey, fontSize: 13),
                 ),
@@ -185,7 +185,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 if (_whitelist.isEmpty)
                   const Padding(
                     padding: EdgeInsets.only(bottom: 8),
-                    child: Text('No IDs in whitelist.',
+                    child: Text('No handles in whitelist.',
                         style: TextStyle(color: Colors.grey, fontSize: 13)),
                   )
                 else
@@ -209,8 +209,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Expanded(
                       child: TextField(
                         controller: _addController,
+                        keyboardType: TextInputType.emailAddress,
                         decoration: const InputDecoration(
-                          labelText: 'Add user ID',
+                          labelText: 'Add handle',
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),

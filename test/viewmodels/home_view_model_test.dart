@@ -509,7 +509,7 @@ void main() {
   group('incoming call — requires init()', () {
     setUp(() async {
       when(() => mockForeground.start()).thenAnswer((_) async {});
-      await vm.init('testUser');
+      await vm.init('testUser', 'test@example.com');
     });
 
     test('auto-answers when caller is whitelisted → state is ActiveCall',
@@ -609,7 +609,9 @@ void _stubAll({
         offer: any(named: 'offer'),
         caller: any(named: 'caller'),
         callee: any(named: 'callee'),
+        callerHandle: any(named: 'callerHandle'),
       )).thenAnswer((_) async {});
+  when(() => signaling.readCallerHandle(any())).thenAnswer((_) async => null);
   when(() => signaling.notifyRemoteUser(any(), any()))
       .thenAnswer((_) async {});
   when(() => signaling.answerStream(any()))
@@ -637,9 +639,9 @@ void _stubAll({
       )).thenAnswer((_) async {});
   when(() => signaling.writeBusySignal(any())).thenAnswer((_) async {});
   // Email ↔ UID resolution (Firebase Auth)
-  when(() => signaling.lookupUidByEmail(any()))
+  when(() => signaling.lookupUidByHandle(any()))
       .thenAnswer((_) async => 'resolved_uid');
-  when(() => signaling.lookupEmailByUid(any()))
+  when(() => signaling.lookupHandleByUid(any()))
       .thenAnswer((_) async => null); // null → fallback to UID string
 
   // ── PeerConnectionService ─────────────────────────────────────────────────

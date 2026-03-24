@@ -70,12 +70,25 @@ void main() {
     expect(entry.endedAt, isNull);
   });
 
-  test('execute parses remoteUserId (callerId) from callId', () async {
-    // callId = 'alice_bob_1000' → caller = 'alice'
+  test('execute stores callerHandle as remoteUserId when available', () async {
+    when(() => mockSignaling.readCallerHandle(callId))
+        .thenAnswer((_) async => 'alice@example.com');
+
     final result = await sut.execute(callId: callId);
 
     final entry = (result as Ok).value;
-    expect(entry.remoteUserId, 'alice');
+    expect(entry.remoteUserId, 'alice@example.com');
+  });
+
+  test('execute falls back to UID parsed from callId when callerHandle is null',
+      () async {
+    when(() => mockSignaling.readCallerHandle(callId))
+        .thenAnswer((_) async => null);
+
+    final result = await sut.execute(callId: callId);
+
+    final entry = (result as Ok).value;
+    expect(entry.remoteUserId, 'alice'); // first segment of callId
   });
 
   test('execute calls peerConnection.init with isCaller=false', () async {
@@ -209,6 +222,7 @@ void _stubHappyPath({
 
   when(() => signaling.readOffer(any())).thenAnswer(
       (_) async => const SessionDescription(sdp: 'offer_sdp', type: 'offer'));
+  when(() => signaling.readCallerHandle(any())).thenAnswer((_) async => null);
   when(() => signaling.writeAnswer(
         callId: any(named: 'callId'),
         answer: any(named: 'answer'),

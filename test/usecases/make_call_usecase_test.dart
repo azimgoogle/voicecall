@@ -62,8 +62,10 @@ void main() {
 
   test('execute returns Ok<CallLogEntry> on success', () async {
     final result = await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'metered',
       initialVolume: 1.0,
     );
@@ -71,7 +73,7 @@ void main() {
     expect(result, isA<Ok>());
     final entry = (result as Ok).value;
     expect(entry.role, 'caller');
-    expect(entry.remoteUserId, 'bob');
+    expect(entry.remoteUserId, 'bob@example.com');
     expect(entry.turnServer, 'metered');
     expect(entry.endedAt, isNull); // call is still active
   });
@@ -79,8 +81,10 @@ void main() {
   test('execute calls peerConnection.init with isCaller=true and turnServer',
       () async {
     await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'expressturn',
       initialVolume: 1.0,
     );
@@ -91,8 +95,10 @@ void main() {
 
   test('execute starts audio session and acquires wake lock', () async {
     await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'metered',
       initialVolume: 0.8,
     );
@@ -103,8 +109,10 @@ void main() {
 
   test('execute sets remote volume to initialVolume', () async {
     await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'metered',
       initialVolume: 0.5,
     );
@@ -112,10 +120,13 @@ void main() {
     verify(() => mockPc.setRemoteVolume(0.5)).called(1);
   });
 
-  test('execute writes offer and notifies remote user', () async {
+  test('execute writes offer with callerHandle and notifies remote user',
+      () async {
     await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'metered',
       initialVolume: 1.0,
     );
@@ -123,16 +134,19 @@ void main() {
     verify(() => mockSignaling.writeOffer(
           callId: any(named: 'callId'),
           offer: any(named: 'offer'),
-          caller: 'alice',
-          callee: 'bob',
+          caller: 'alice_uid',
+          callee: 'bob_uid',
+          callerHandle: 'alice@example.com',
         )).called(1);
-    verify(() => mockSignaling.notifyRemoteUser('bob', any())).called(1);
+    verify(() => mockSignaling.notifyRemoteUser('bob_uid', any())).called(1);
   });
 
   test('execute saves a log entry before returning', () async {
     await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'metered',
       initialVolume: 1.0,
     );
@@ -140,16 +154,19 @@ void main() {
     verify(() => mockLogRepo.saveEntry(any())).called(1);
   });
 
-  test('execute persists last_remote_id in SharedPreferences', () async {
+  test('execute persists remoteHandle as last_remote_id in SharedPreferences',
+      () async {
     await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'metered',
       initialVolume: 1.0,
     );
 
     final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getString('last_remote_id'), 'bob');
+    expect(prefs.getString('last_remote_id'), 'bob@example.com');
   });
 
   // ── Error paths ────────────────────────────────────────────────────────────
@@ -162,8 +179,10 @@ void main() {
         )).thenThrow(Exception('WebRTC init failed'));
 
     final result = await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'metered',
       initialVolume: 1.0,
     );
@@ -177,11 +196,14 @@ void main() {
           offer: any(named: 'offer'),
           caller: any(named: 'caller'),
           callee: any(named: 'callee'),
+          callerHandle: any(named: 'callerHandle'),
         )).thenThrow(Exception('Firebase write failed'));
 
     final result = await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'metered',
       initialVolume: 1.0,
     );
@@ -193,8 +215,10 @@ void main() {
     when(() => mockPc.createOffer()).thenThrow(Exception('SDP failed'));
 
     final result = await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'metered',
       initialVolume: 1.0,
     );
@@ -216,8 +240,10 @@ void main() {
     });
 
     await sut.execute(
-      callerId: 'alice',
-      remoteId: 'bob',
+      callerId: 'alice_uid',
+      remoteId: 'bob_uid',
+      callerHandle: 'alice@example.com',
+      remoteHandle: 'bob@example.com',
       turnServer: 'metered',
       initialVolume: 1.0,
     );
@@ -244,6 +270,7 @@ void _stubHappyPath({
         offer: any(named: 'offer'),
         caller: any(named: 'caller'),
         callee: any(named: 'callee'),
+        callerHandle: any(named: 'callerHandle'),
       )).thenAnswer((_) async {});
   when(() => signaling.notifyRemoteUser(any(), any())).thenAnswer((_) async {});
   when(() => signaling.answerStream(any()))

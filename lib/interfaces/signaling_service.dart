@@ -20,7 +20,12 @@ abstract class SignalingService {
     required SessionDescription offer,
     required String caller,
     required String callee,
+    required String callerHandle,
   });
+
+  /// Reads the caller's handle stored in the call record.
+  /// Returns null if not present (legacy calls before this field was added).
+  Future<String?> readCallerHandle(String callId);
 
   Future<SessionDescription> readOffer(String callId);
 
@@ -81,13 +86,13 @@ abstract class SignalingService {
 
   // ── Identity ──────────────────────────────────────────────────────────────
 
-  /// Resolves [email] to a Firebase UID via the /emailToUid RTDB index.
-  /// Returns null if the email is not registered.
-  Future<String?> lookupUidByEmail(String email);
+  /// Resolves [handle] to a Firebase UID via the identity index.
+  /// Returns null if the handle is not registered.
+  Future<String?> lookupUidByHandle(String handle);
 
-  /// Resolves [uid] to an email via the /userProfiles RTDB index.
+  /// Resolves [uid] to a display handle via the identity index.
   /// Returns null if the profile has not been written yet.
-  Future<String?> lookupEmailByUid(String uid);
+  Future<String?> lookupHandleByUid(String uid);
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
 
