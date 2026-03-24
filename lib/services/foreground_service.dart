@@ -31,6 +31,11 @@ Future<void> startForegroundService() async {
     serviceId: 100,
     notificationTitle: 'Voice Call',
     notificationText: 'Waiting for calls...',
+    // 'ic_notification' matches the <meta-data android:name="ic_notification">
+    // entry in the ForegroundService declaration in AndroidManifest.xml.
+    // The plugin resolves the resource ID from that meta-data at runtime,
+    // giving us a monochrome @drawable/ic_notification in the status bar.
+    notificationIcon: const NotificationIcon(metaDataName: 'ic_notification'),
     callback: _startCallback,
   );
 }
@@ -48,6 +53,7 @@ Future<void> updateForegroundNotification(
   await FlutterForegroundTask.updateService(
     notificationTitle: 'Voice Call',
     notificationText: text,
+    notificationIcon: const NotificationIcon(metaDataName: 'ic_notification'),
     notificationButtons: [
       if (showMute)
         NotificationButton(

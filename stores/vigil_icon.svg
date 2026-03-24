@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Background gradient: deep navy-teal → brighter teal -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#0D3F5A"/>
+      <stop offset="100%" stop-color="#146E96"/>
+    </linearGradient>
+
+    <!-- Soft inner glow layer -->
+    <radialGradient id="glowGrad" cx="50%" cy="38%" r="55%">
+      <stop offset="0%"   stop-color="#1E8CB0" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#0D3F5A" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ── Background ── -->
+  <rect width="1024" height="1024" rx="231" ry="231" fill="url(#bgGrad)"/>
+  <rect width="1024" height="1024" rx="231" ry="231" fill="url(#glowGrad)"/>
+
+  <!--
+    ── Ear arc ──
+    Centre: (471, 512)  rx=179.2  ry=291.84  stroke-width=73.7
+    Sweeps from 50° to 310° clockwise in screen coords
+    (a 260° arc opening to the right — the "C" shape)
+    Start point @ 50°:  (471 + 179.2·cos50°, 512 + 291.84·sin50°) = (586.2, 735.5)
+    End   point @ 310°: (471 + 179.2·cos310°, 512 + 291.84·sin310°) = (586.2, 288.5)
+    large-arc-flag=1  sweep-flag=1 (clockwise)
+  -->
+  <path
+    d="M 586.2,735.5 A 179.2,291.84 0 1,1 586.2,288.5"
+    stroke="white" stroke-width="73.7" stroke-linecap="round" fill="none"/>
+
+  <!--
+    ── Inner ear canal (filled circle, offset slightly downward) ──
+    From Python: ellipse bbox (414.7,483.8)→(527.3,596.5)
+    → cx=471  cy=540  r=56.3
+  -->
+  <circle cx="471" cy="540" r="56.3" fill="white"/>
+
+  <!--
+    ── Connecting bridge between canal and outer ear ──
+    Narrow tall ellipse linking the canal dot to the ear stroke
+    cx≈481  cy≈547  rx=26.5  ry=58.4
+  -->
+  <ellipse cx="481" cy="547" rx="26.5" ry="58.4" fill="white"/>
+
+  <!--
+    ── Sound-wave arcs (centred at 553, 512) ──
+    Each arc sweeps from −55° to +55° (110°, opening right)
+    Start @ −55°: (wave_cx + rx·cos55°, wave_cy − ry·sin55°)
+    End   @ +55°: (wave_cx + rx·cos55°, wave_cy + ry·sin55°)
+    large-arc-flag=0  sweep-flag=1 (clockwise through 0°=right)
+    cos55°=0.5736  sin55°=0.8192
+  -->
+
+  <!-- Wave 1 — closest, full opacity -->
+  <!-- rx=138.24  ry=179.2  thk=53.25
+       Start=(632.3, 365.2)  End=(632.3, 658.8) -->
+  <path
+    d="M 632.3,365.2 A 138.24,179.2 0 0,1 632.3,658.8"
+    stroke="white" stroke-width="53.25" stroke-linecap="round" fill="none"
+    opacity="1.0"/>
+
+  <!-- Wave 2 — medium, slightly dimmed -->
+  <!-- rx=230.4  ry=297.16  thk=45.06
+       Start=(685.1, 268.5)  End=(685.1, 755.5) -->
+  <path
+    d="M 685.1,268.5 A 230.4,297.16 0 0,1 685.1,755.5"
+    stroke="white" stroke-width="45.06" stroke-linecap="round" fill="none"
+    opacity="0.78"/>
+
+  <!-- Wave 3 — outermost, most transparent -->
+  <!-- rx=322.56  ry=414.72  thk=36.86
+       Start=(738.0, 172.1)  End=(738.0, 851.9) -->
+  <path
+    d="M 738.0,172.1 A 322.56,414.72 0 0,1 738.0,851.9"
+    stroke="white" stroke-width="36.86" stroke-linecap="round" fill="none"
+    opacity="0.57"/>
+</svg>
