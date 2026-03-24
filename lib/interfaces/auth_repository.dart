@@ -30,6 +30,11 @@ abstract class AuthRepository {
   /// email, weak password, etc.
   Future<AuthUser> registerWithEmail(String email, String password);
 
+  /// Sign in anonymously — creates a temporary Firebase account with no email.
+  /// The user's handle will be their Firebase UID.
+  /// Throws on network errors.
+  Future<AuthUser> signInAnonymously();
+
   /// Sign out from all providers.
   Future<void> signOut();
 }

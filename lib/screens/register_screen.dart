@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../di/service_locator.dart';
 import '../interfaces/auth_repository.dart';
-import 'home_screen.dart';
+import 'permission_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -55,7 +55,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _emailCtrl.text.trim(),
         _passwordCtrl.text,
       );
-      _navigateHome();
+      _navigatePermissions();
     } catch (e) {
       _setError(e);
     } finally {
@@ -63,10 +63,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  void _navigateHome() {
+  void _navigatePermissions() {
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
+      MaterialPageRoute(builder: (_) => const PermissionScreen()),
       (_) => false,
     );
   }

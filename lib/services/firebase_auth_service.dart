@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import '../core/uid_utils.dart';
 import '../interfaces/auth_repository.dart';
 
 /// Firebase Auth implementation of [AuthRepository].
@@ -64,26 +65,35 @@ class FirebaseAuthService implements AuthRepository {
   }
 
   @override
+  Future<AuthUser> signInAnonymously() async {
+    final result = await _auth.signInAnonymously();
+    return _afterAuth(result.user!);
+  }
+
+  @override
   Future<void> signOut() async {
     await _googleSignIn.signOut();
     await _auth.signOut();
   }
 
-  /// Writes the email↔UID mapping to RTDB after any successful auth, then
+  /// Writes the handle↔UID mapping to RTDB after any successful auth, then
   /// returns an [AuthUser]. Silently ignores RTDB write failures — the user
   /// is still signed in even if the mapping write fails.
+  ///
+  /// For email users the handle is their email address.
+  /// For anonymous users the handle is their UID (no dots, so no encoding needed).
   Future<AuthUser> _afterAuth(User user) async {
     final email = user.email;
-    if (email != null) {
-      final encodedEmail = email.replaceAll('.', ',');
-      try {
-        await Future.wait([
-          _db.child('emailToUid/$encodedEmail').set(user.uid),
-          _db.child('userProfiles/${user.uid}/email').set(email),
-        ]);
-      } catch (_) {
-        // Non-fatal: RTDB write failed (offline, permissions not yet set up).
-      }
+    // Use email as handle for registered users; fall back to a short hash for anonymous.
+    final handle = email ?? shortUidHash(user.uid);
+    final encodedHandle = handle.replaceAll('.', ',');
+    try {
+      await Future.wait([
+        _db.child('emailToUid/$encodedHandle').set(user.uid),
+        _db.child('userProfiles/${user.uid}/email').set(handle),
+      ]);
+    } catch (_) {
+      // Non-fatal: RTDB write failed (offline, permissions not yet set up).
     }
     return AuthUser(uid: user.uid, email: email);
   }

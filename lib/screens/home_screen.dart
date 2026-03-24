@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../core/uid_utils.dart';
 import '../di/service_locator.dart';
 import '../interfaces/auth_repository.dart';
 import '../interfaces/call_log_repository.dart';
@@ -31,7 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _remoteConfig = sl<RemoteConfigRepository>();
   final _inputFocusNode = FocusNode();
 
-  String _myUserId = '';
+  String _myUserHandle = '';
   String _selectedTurnServer = 'both';
   bool _micPermissionDenied = false;
   bool _turnSelectorEnabled = false;
@@ -58,13 +59,13 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     final userId = firebaseUser.uid;
-    final userHandle = firebaseUser.email ?? userId;
+    final userHandle = firebaseUser.email ?? shortUidHash(firebaseUser.uid);
 
     final lastRemoteId = await _viewModel.loadLastRemoteId();
 
     if (mounted) {
       setState(() {
-        _myUserId = userId;
+        _myUserHandle = userHandle;
         _remoteIdController.text = lastRemoteId;
       });
     }
@@ -313,7 +314,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    FirebaseAuth.instance.currentUser?.email ?? _myUserId,
+                    _myUserHandle,
                     style: const TextStyle(fontSize: 18),
                   ),
                   const SizedBox(height: 32),

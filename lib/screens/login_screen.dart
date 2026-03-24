@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../di/service_locator.dart';
 import '../interfaces/auth_repository.dart';
-import 'home_screen.dart';
+import 'permission_screen.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -39,6 +39,8 @@ class _LoginScreenState extends State<LoginScreen> {
         'user-disabled' => 'This account has been disabled.',
         'too-many-requests' => 'Too many attempts. Try again later.',
         'network-request-failed' => 'No internet connection.',
+        'operation-not-allowed' =>
+          'Guest sign-in is not enabled yet. Please use Google or email.',
         _ => e.message ?? msg,
       };
     } else if (e.toString().contains('cancelled')) {
@@ -54,7 +56,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       await _auth.signInWithGoogle();
-      _navigateHome();
+      _navigatePermissions();
     } catch (e) {
       _setError(e);
     } finally {
@@ -73,7 +75,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _emailCtrl.text.trim(),
         _passwordCtrl.text,
       );
-      _navigateHome();
+      _navigatePermissions();
     } catch (e) {
       _setError(e);
     } finally {
@@ -81,10 +83,25 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _navigateHome() {
+  Future<void> _signInAnonymously() async {
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
+    try {
+      await _auth.signInAnonymously();
+      _navigatePermissions();
+    } catch (e) {
+      _setError(e);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _navigatePermissions() {
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
+      MaterialPageRoute(builder: (_) => const PermissionScreen()),
     );
   }
 
@@ -203,6 +220,14 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextButton(
                     onPressed: _loading ? null : _goToRegister,
                     child: const Text("Don't have an account? Register"),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: _loading ? null : _signInAnonymously,
+                    child: Text(
+                      'Continue as Guest',
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
                   ),
                 ],
               ),

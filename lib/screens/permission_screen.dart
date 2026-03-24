@@ -17,6 +17,19 @@ class PermissionScreen extends StatefulWidget {
 class _PermissionScreenState extends State<PermissionScreen> {
   bool _requesting = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _checkAlreadyGranted();
+  }
+
+  /// If microphone is already granted, skip straight to HomeScreen
+  /// without showing any UI — this handles returning users on every launch.
+  Future<void> _checkAlreadyGranted() async {
+    final micGranted = await Permission.microphone.isGranted;
+    if (micGranted && mounted) _navigateHome();
+  }
+
   Future<void> _requestPermissions() async {
     setState(() => _requesting = true);
 
