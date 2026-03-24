@@ -1,3 +1,5 @@
+import 'dart:math' show pi;
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -139,7 +141,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   // Google sign-in
                   OutlinedButton.icon(
                     onPressed: _loading ? null : _signInWithGoogle,
-                    icon: const Icon(Icons.login),
+                    icon: const _GoogleLogo(size: 20),
                     label: const Text('Continue with Google'),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -237,4 +239,71 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
+}
+
+// ── Google "G" logo ──────────────────────────────────────────────────────────
+
+class _GoogleLogo extends StatelessWidget {
+  const _GoogleLogo({this.size = 20});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: size,
+      child: CustomPaint(painter: _GoogleLogoPainter()),
+    );
+  }
+}
+
+class _GoogleLogoPainter extends CustomPainter {
+  static const _blue   = Color(0xFF4285F4);
+  static const _red    = Color(0xFFEA4335);
+  static const _yellow = Color(0xFFFBBC05);
+  static const _green  = Color(0xFF34A853);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final cx = w / 2;
+    final cy = w / 2;
+    final r  = w / 2;
+    final sw = w * 0.22; // stroke width proportional to icon size
+
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = sw
+      ..strokeCap = StrokeCap.butt;
+
+    final rect = Rect.fromCircle(center: Offset(cx, cy), radius: r - sw / 2);
+
+    // Blue arc  — top-right, sweeping most of the circle counter-clockwise
+    paint.color = _blue;
+    canvas.drawArc(rect, -pi * 0.25, -pi * 1.15, false, paint);
+
+    // Red arc   — bottom-left
+    paint.color = _red;
+    canvas.drawArc(rect, pi * 0.9, -pi * 0.55, false, paint);
+
+    // Yellow arc — bottom
+    paint.color = _yellow;
+    canvas.drawArc(rect, pi * 0.35, pi * 0.55, false, paint);
+
+    // Green arc — right
+    paint.color = _green;
+    canvas.drawArc(rect, -pi * 0.25, pi * 0.60, false, paint);
+
+    // Horizontal bar of the "G" (Google blue)
+    paint
+      ..color = _blue
+      ..strokeCap = StrokeCap.square;
+    canvas.drawLine(
+      Offset(cx, cy),
+      Offset(cx + r - sw / 2, cy),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_GoogleLogoPainter _) => false;
 }
