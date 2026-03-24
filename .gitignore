@@ -43,4 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Firebase config — never commit; add per-flavor files manually
+android/app/google-services.json
+android/app/src/dev/google-services.json
+android/app/src/prod/google-services.json
 /wireframes.html

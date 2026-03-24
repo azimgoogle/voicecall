@@ -22,14 +22,33 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.familycall.children_voice_call"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+    }
+
+    // ── Flavors ───────────────────────────────────────────────────────────────
+    // Run with:  flutter run --flavor dev
+    //            flutter run --flavor prod
+    //            flutter build apk --flavor prod
+    //
+    // google-services.json per flavor:
+    //   android/app/src/dev/google-services.json   (app ID: ...children_voice_call.dev)
+    //   android/app/src/prod/google-services.json  (app ID: ...children_voice_call)
+    flavorDimensions += "environment"
+    productFlavors {
+        create("dev") {
+            dimension = "environment"
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            // App label is overridden in src/dev/res/values/strings.xml
+        }
+        create("prod") {
+            dimension = "environment"
+            // Uses defaultConfig applicationId and main/res strings as-is.
+        }
     }
 
     buildTypes {
