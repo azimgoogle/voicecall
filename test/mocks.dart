@@ -1,6 +1,7 @@
 import 'package:mocktail/mocktail.dart';
 
 import 'package:family_call/interfaces/analytics_repository.dart';
+import 'package:family_call/interfaces/auth_repository.dart';
 import 'package:family_call/interfaces/audio_service.dart';
 import 'package:family_call/interfaces/call_log_repository.dart';
 import 'package:family_call/interfaces/crash_reporter.dart';
@@ -14,6 +15,8 @@ import 'package:family_call/models/ice_candidate_model.dart';
 import 'package:family_call/models/session_description.dart';
 
 // ── Mock classes ──────────────────────────────────────────────────────────────
+
+class MockAuthRepository extends Mock implements AuthRepository {}
 
 class MockAnalyticsRepository extends Mock implements AnalyticsRepository {}
 

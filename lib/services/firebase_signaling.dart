@@ -190,9 +190,16 @@ class FirebaseSignaling implements SignalingService {
   // ── Identity ──────────────────────────────────────────────────────────────
 
   @override
-  Future<bool> isUserIdTaken(String userId) async {
-    final snap = await _db.child('users/$userId').get();
-    return snap.exists;
+  Future<String?> lookupUidByEmail(String email) async {
+    final encoded = email.replaceAll('.', ',');
+    final snap = await _db.child('emailToUid/$encoded').get();
+    return snap.exists ? snap.value as String? : null;
+  }
+
+  @override
+  Future<String?> lookupEmailByUid(String uid) async {
+    final snap = await _db.child('userProfiles/$uid/email').get();
+    return snap.exists ? snap.value as String? : null;
   }
 
   // ── Cleanup ───────────────────────────────────────────────────────────────

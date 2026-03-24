@@ -207,16 +207,27 @@ class HomeViewModel {
     return totalSeconds ~/ 60;
   }
 
-  /// Initiates an outgoing call to [remoteId] using [turnServer].
+  /// Initiates an outgoing call to [remoteEmail] using [turnServer].
+  ///
+  /// [remoteEmail] is the recipient's email address. It is resolved to a
+  /// Firebase UID via the /emailToUid RTDB index before the call is set up.
+  /// Emits [HomeEvent.callSetupFailed] if the email is not found.
   ///
   /// Delegates all I/O to [MakeCallUseCase]; then subscribes to the
   /// per-call connection-event streams exposed by [PeerConnectionService].
   /// Emits [HomeEvent.callSetupFailed] and resets to [Idle] on [Err].
-  Future<void> makeCall(String remoteId, String turnServer) async {
-    if (remoteId.isEmpty) return;
+  Future<void> makeCall(String remoteEmail, String turnServer) async {
+    if (remoteEmail.isEmpty) return;
 
     if (!(await Permission.microphone.status).isGranted) {
       _emitEvent(HomeEvent.microphonePermissionDenied);
+      return;
+    }
+
+    // Resolve email → UID. Emit failure immediately if not registered.
+    final remoteId = await _signaling.lookupUidByEmail(remoteEmail);
+    if (remoteId == null) {
+      _emitEvent(HomeEvent.callSetupFailed);
       return;
     }
 
@@ -271,7 +282,7 @@ class HomeViewModel {
 
         _emit(ActiveCall(
           isCaller: true,
-          remoteUserId: remoteId,
+          remoteUserId: remoteEmail,
           callId: value.callId,
           startedAt: value.startedAt,
           turnServer: turnServer,
@@ -472,23 +483,27 @@ class HomeViewModel {
     _incomingCallSub?.cancel();
     _incomingCallSub = _signaling.incomingCall(_userId).listen(
       (callId) async {
-      final callerId = callId.split('_').first;
+      final callerUid = callId.split('_').first;
 
       if (_state is ActiveCall || _state is IncomingCall) {
-        await _signaling.writeBusySignal(callerId);
+        await _signaling.writeBusySignal(callerUid);
         return;
       }
 
-      final autoAnswer = await _settings.isAutoAnswer(callerId);
+      final autoAnswer = await _settings.isAutoAnswer(callerUid);
       unawaited(_analytics.logEvent('incoming_call_received', parameters: {
         'auto_answer_eligible': autoAnswer,
       }));
+
+      // Resolve UID → email for a human-readable caller display name.
+      final callerDisplay =
+          await _signaling.lookupEmailByUid(callerUid) ?? callerUid;
 
       if (autoAnswer) {
         unawaited(_analytics.logEvent('incoming_call_auto_answered'));
         await answerCall(callId);
       } else {
-        _emit(IncomingCall(callId: callId, callerId: callerId));
+        _emit(IncomingCall(callId: callId, callerId: callerDisplay));
         _incomingCallCancelSub =
             _signaling.callCancelled(callId).listen((_) {
           _onIncomingCallCancelled();

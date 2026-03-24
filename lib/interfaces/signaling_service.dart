@@ -81,8 +81,13 @@ abstract class SignalingService {
 
   // ── Identity ──────────────────────────────────────────────────────────────
 
-  /// Returns true if [userId] already exists in the backend.
-  Future<bool> isUserIdTaken(String userId);
+  /// Resolves [email] to a Firebase UID via the /emailToUid RTDB index.
+  /// Returns null if the email is not registered.
+  Future<String?> lookupUidByEmail(String email);
+
+  /// Resolves [uid] to an email via the /userProfiles RTDB index.
+  /// Returns null if the profile has not been written yet.
+  Future<String?> lookupEmailByUid(String uid);
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
 

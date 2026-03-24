@@ -1,11 +1,12 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../di/service_locator.dart';
+import '../interfaces/auth_repository.dart';
 import '../interfaces/call_log_repository.dart';
 import '../interfaces/remote_config_repository.dart';
 import '../models/call_log_entry.dart';
@@ -13,7 +14,7 @@ import '../models/call_state.dart';
 import '../viewmodels/home_view_model.dart';
 import 'call_logs_screen.dart';
 import 'call_screen.dart';
-import 'onboarding_screen.dart';
+import 'login_screen.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -47,17 +48,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _initAsync() async {
-    final prefs = await SharedPreferences.getInstance();
-    final userId = prefs.getString('userId');
-    if (userId == null) {
-      // SharedPreferences was cleared unexpectedly — route back to onboarding.
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null) {
       if (mounted) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
         );
       }
       return;
     }
+    final userId = firebaseUser.uid;
 
     final lastRemoteId = await _viewModel.loadLastRemoteId();
 
@@ -286,6 +286,18 @@ class _HomeScreenState extends State<HomeScreen> {
               MaterialPageRoute(builder: (_) => const CallLogsScreen()),
             ),
           ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Sign Out',
+            onPressed: () async {
+              await sl<AuthRepository>().signOut();
+              if (!mounted) return;
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                (_) => false,
+              );
+            },
+          ),
         ],
       ),
       body: Column(
@@ -299,8 +311,10 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('My ID: $_myUserId',
-                      style: const TextStyle(fontSize: 18)),
+                  Text(
+                    FirebaseAuth.instance.currentUser?.email ?? _myUserId,
+                    style: const TextStyle(fontSize: 18),
+                  ),
                   const SizedBox(height: 32),
                   TextField(
                     controller: _remoteIdController,
@@ -308,7 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     textInputAction: TextInputAction.go,
                     onSubmitted: (value) => _makeCallTo(value.trim()),
                     decoration: const InputDecoration(
-                      labelText: 'Call someone',
+                      labelText: 'Enter email to call',
                       border: OutlineInputBorder(),
                     ),
                   ),

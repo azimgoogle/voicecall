@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/app_bootstrapper.dart';
 import 'home_screen.dart';
-import 'onboarding_screen.dart';
+import 'login_screen.dart';
 
 /// Shown when [AppBootstrapper.boot] throws on startup (e.g. Firebase init
 /// failed due to a missing config file or no network on first launch).
@@ -25,7 +25,7 @@ class _StartupErrorScreenState extends State<StartupErrorScreen> {
       if (mounted) {
         Navigator.of(context).pushReplacement(MaterialPageRoute(
           builder: (_) =>
-              hasUserId ? const HomeScreen() : const OnboardingScreen(),
+              hasUserId ? const HomeScreen() : const LoginScreen(),
         ));
       }
     } catch (_) {

@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'core/app_bootstrapper.dart';
 import 'screens/home_screen.dart';
-import 'screens/onboarding_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/startup_error_screen.dart';
 
 void main() async {
@@ -13,7 +13,7 @@ void main() async {
     final hasUserId = await AppBootstrapper.boot();
     runZonedGuarded(
       () => runApp(MaterialApp(
-        home: hasUserId ? const HomeScreen() : const OnboardingScreen(),
+        home: hasUserId ? const HomeScreen() : const LoginScreen(),
       )),
       (error, stack) =>
           FirebaseCrashlytics.instance.recordError(error, stack, fatal: true),

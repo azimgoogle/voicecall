@@ -636,6 +636,11 @@ void _stubAll({
         answer: any(named: 'answer'),
       )).thenAnswer((_) async {});
   when(() => signaling.writeBusySignal(any())).thenAnswer((_) async {});
+  // Email ↔ UID resolution (Firebase Auth)
+  when(() => signaling.lookupUidByEmail(any()))
+      .thenAnswer((_) async => 'resolved_uid');
+  when(() => signaling.lookupEmailByUid(any()))
+      .thenAnswer((_) async => null); // null → fallback to UID string
 
   // ── PeerConnectionService ─────────────────────────────────────────────────
   when(() => pc.init(
