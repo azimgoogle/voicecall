@@ -8,6 +8,7 @@ import '../interfaces/settings_repository.dart';
 class SettingsService implements SettingsRepository {
   static const String retentionDaysKey = 'settings_retention_days';
   static const String _whitelistKey = 'settings_whitelist';
+  static const String _anonSecondsKey = 'anon_used_seconds';
 
   @override
   Future<int> getRetentionDays() async {
@@ -39,5 +40,19 @@ class SettingsService implements SettingsRepository {
   Future<bool> isAutoAnswer(String userId) async {
     final list = await getWhitelist();
     return list.contains(userId);
+  }
+
+  @override
+  Future<int> getAnonSecondsUsed() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_anonSecondsKey) ?? 0;
+  }
+
+  @override
+  Future<void> addAnonSeconds(int seconds) async {
+    if (seconds <= 0) return;
+    final prefs = await SharedPreferences.getInstance();
+    final current = prefs.getInt(_anonSecondsKey) ?? 0;
+    await prefs.setInt(_anonSecondsKey, current + seconds);
   }
 }

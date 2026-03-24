@@ -42,6 +42,9 @@ enum HomeEvent {
 
   /// The user has consumed their 100-minute weekly call allowance.
   weeklyLimitReached,
+
+  /// Anonymous guest has used all 100 allotted lifetime minutes.
+  anonLimitReached,
 }
 
 /// Orchestrates the entire call lifecycle for [HomeScreen].
@@ -135,6 +138,7 @@ class HomeViewModel {
 
   String _userId = '';
   String _userHandle = '';
+  bool _isAnonymous = false;
   double _defaultVolume = 1.0;
 
   CallLogEntry? _currentLogEntry;
@@ -171,10 +175,12 @@ class HomeViewModel {
   /// Must be called once after construction. Requests mic permission,
   /// loads persisted prefs, starts the incoming-call listener, and
   /// starts the foreground service.
-  Future<void> init(String userId, String userHandle) async {
+  Future<void> init(String userId, String userHandle,
+      {bool isAnonymous = false}) async {
     await Permission.microphone.request();
     _userId = userId;
     _userHandle = userHandle;
+    _isAnonymous = isAnonymous;
     await _crashReporter.setUserIdentifier(userId);
     unawaited(_analytics.setUserId(userId));
 
@@ -237,6 +243,14 @@ class HomeViewModel {
     if (weeklyLimit > 0 && await getWeeklyUsedMinutes() >= weeklyLimit) {
       _emitEvent(HomeEvent.weeklyLimitReached);
       return;
+    }
+
+    if (_isAnonymous && weeklyLimit != 0) {
+      final anonSeconds = await _settings.getAnonSecondsUsed();
+      if (anonSeconds >= SettingsRepository.anonGuestMinutesAllowed * 60) {
+        _emitEvent(HomeEvent.anonLimitReached);
+        return;
+      }
     }
 
     _crashReporter.setCustomKey('role', 'caller');
@@ -329,6 +343,14 @@ class HomeViewModel {
       return;
     }
 
+    if (_isAnonymous && weeklyLimit != 0) {
+      final anonSeconds = await _settings.getAnonSecondsUsed();
+      if (anonSeconds >= SettingsRepository.anonGuestMinutesAllowed * 60) {
+        _emitEvent(HomeEvent.anonLimitReached);
+        return;
+      }
+    }
+
     _crashReporter.setCustomKey('role', 'callee');
 
     final result = await _answerCall.execute(callId: callId);
@@ -407,15 +429,19 @@ class HomeViewModel {
     );
 
     if (entry != null) {
+      final durationSeconds =
+          DateTime.now().difference(entry.startedAt).inSeconds;
       unawaited(_analytics.logEvent('call_ended', parameters: {
-        'duration_s':
-            DateTime.now().difference(entry.startedAt).inSeconds,
+        'duration_s': durationSeconds,
         'role': entry.role,
         'turn_server_selected': entry.turnServer,
         'bytes_sent': entry.bytesSent,
         'bytes_received': entry.bytesReceived,
         'end_reason': endReason,
       }));
+      if (_isAnonymous) {
+        unawaited(_settings.addAnonSeconds(durationSeconds));
+      }
     }
     _emit(const Idle());
   }
@@ -591,15 +617,19 @@ class HomeViewModel {
       releaseAudio: false,
     ).then((_) {
       if (entry != null) {
+        final durationSeconds =
+            DateTime.now().difference(entry.startedAt).inSeconds;
         unawaited(_analytics.logEvent('call_ended', parameters: {
-          'duration_s':
-              DateTime.now().difference(entry.startedAt).inSeconds,
+          'duration_s': durationSeconds,
           'role': entry.role,
           'turn_server_selected': entry.turnServer,
           'bytes_sent': entry.bytesSent,
           'bytes_received': entry.bytesReceived,
           'end_reason': 'remote_disconnected',
         }));
+        if (_isAnonymous) {
+          unawaited(_settings.addAnonSeconds(durationSeconds));
+        }
       }
       _emit(const Idle());
     });

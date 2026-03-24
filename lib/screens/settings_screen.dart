@@ -1,9 +1,13 @@
+import 'dart:math' show max;
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../di/service_locator.dart';
 import '../interfaces/call_log_repository.dart';
 import '../interfaces/remote_config_repository.dart';
 import '../interfaces/settings_repository.dart';
+import 'login_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -21,6 +25,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<String> _whitelist = [];
   int _weeklyUsedMinutes = 0;
   int _weeklyLimitMinutes = RemoteConfigRepository.defaultWeeklyLimitMinutes;
+  bool _isAnonymous = false;
+  int _anonSecondsUsed = 0;
 
   /// Unique remote user IDs from recent call logs not already in the whitelist.
   List<String> _suggestions = [];
@@ -62,6 +68,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     }
 
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    final isAnonymous = firebaseUser?.isAnonymous ?? false;
+    final anonSecondsUsed =
+        isAnonymous ? await _settings.getAnonSecondsUsed() : 0;
+
     if (mounted) {
       setState(() {
         _retentionDays = days;
@@ -69,6 +80,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _suggestions = suggestions;
         _weeklyUsedMinutes = weeklyUsed;
         _weeklyLimitMinutes = _remoteConfig.getWeeklyCallLimitMinutes();
+        _isAnonymous = isAnonymous;
+        _anonSecondsUsed = anonSecondsUsed;
         _loading = false;
       });
     }
@@ -111,6 +124,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
           : ListView(
               padding: const EdgeInsets.all(20),
               children: [
+                // ── Guest Trial Upsell (anonymous + limit enabled) ─────
+                if (_isAnonymous && !unlimited) ...[
+                  _AnonUpsellCard(
+                    anonSecondsUsed: _anonSecondsUsed,
+                    onRegister: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 20),
+                ],
+
                 // ── Weekly Call Usage (hidden when unlimited) ───────────
                 if (!unlimited) ...[
                   Text('Weekly Call Usage',
@@ -248,6 +275,92 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ],
             ),
+    );
+  }
+}
+
+// ── Anonymous guest upsell card ───────────────────────────────────────────────
+
+class _AnonUpsellCard extends StatelessWidget {
+  const _AnonUpsellCard({
+    required this.anonSecondsUsed,
+    required this.onRegister,
+  });
+
+  final int anonSecondsUsed;
+  final VoidCallback onRegister;
+
+  @override
+  Widget build(BuildContext context) {
+    const total = SettingsRepository.anonGuestMinutesAllowed;
+    final usedMinutes = anonSecondsUsed ~/ 60;
+    final remaining = max(0, total - usedMinutes);
+    final progress = (usedMinutes / total).clamp(0.0, 1.0);
+    final atLimit = remaining == 0;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: atLimit ? Colors.red.shade50 : Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: atLimit ? Colors.red.shade200 : Colors.orange.shade200,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.card_giftcard,
+                color: atLimit ? Colors.red.shade700 : Colors.orange.shade700,
+                size: 20),
+            const SizedBox(width: 8),
+            Text(
+              'Guest Trial',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color:
+                    atLimit ? Colors.red.shade700 : Colors.orange.shade700,
+              ),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 6,
+              backgroundColor: Colors.grey.shade200,
+              color: atLimit ? Colors.red : Colors.orange,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            atLimit
+                ? 'All $total guest minutes used.'
+                : '$remaining of $total guest minutes remaining.',
+            style: TextStyle(
+              fontSize: 13,
+              color: atLimit ? Colors.red.shade700 : Colors.grey.shade700,
+              fontWeight: atLimit ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Create a free account and get 100 extra minutes as a welcome bonus.',
+            style: TextStyle(fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onRegister,
+              icon: const Icon(Icons.person_add_outlined, size: 18),
+              label: const Text('Create Free Account'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

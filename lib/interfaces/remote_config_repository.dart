@@ -36,4 +36,13 @@ abstract class RemoteConfigRepository {
 
   /// The in-app fallback for the TURN selector flag.
   static const bool defaultTurnSelectorEnabled = false;
+
+  /// Returns whether the email/password sign-in form should be shown.
+  ///
+  /// Disable remotely to force Google-only or guest-only sign-in without
+  /// shipping a new build. Remote Config key: `email_signin_enabled`.
+  bool isEmailSignInEnabled();
+
+  /// The in-app fallback: email sign-in is shown by default.
+  static const bool defaultEmailSignInEnabled = false;
 }

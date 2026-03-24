@@ -37,6 +37,7 @@ import '../interfaces/remote_config_repository.dart';
 class FirebaseRemoteConfigService implements RemoteConfigRepository {
   static const String _weeklyLimitKey    = 'weekly_call_limit_minutes';
   static const String _turnSelectorKey   = 'turn_selector_enabled';
+  static const String _emailSignInKey    = 'email_signin_enabled';
 
   final FirebaseRemoteConfig _config;
 
@@ -49,6 +50,7 @@ class FirebaseRemoteConfigService implements RemoteConfigRepository {
       await _config.setDefaults({
         _weeklyLimitKey  : RemoteConfigRepository.defaultWeeklyLimitMinutes,
         _turnSelectorKey : RemoteConfigRepository.defaultTurnSelectorEnabled,
+        _emailSignInKey  : RemoteConfigRepository.defaultEmailSignInEnabled,
       });
       await _config.setConfigSettings(RemoteConfigSettings(
         // In production, Firebase enforces a minimum of 1 hour between fetches.
@@ -67,4 +69,7 @@ class FirebaseRemoteConfigService implements RemoteConfigRepository {
 
   @override
   bool isTurnSelectorEnabled() => _config.getBool(_turnSelectorKey);
+
+  @override
+  bool isEmailSignInEnabled() => _config.getBool(_emailSignInKey);
 }

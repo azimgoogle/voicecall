@@ -86,7 +86,8 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
-    await _viewModel.init(userId, userHandle);
+    await _viewModel.init(userId, userHandle,
+        isAnonymous: firebaseUser.isAnonymous);
     FlutterForegroundTask.addTaskDataCallback(_onForegroundData);
     _eventsSub = _viewModel.events.listen(_onEvent);
 
@@ -169,7 +170,40 @@ class _HomeScreenState extends State<HomeScreen> {
             duration: Duration(seconds: 4),
           ));
         }
+
+      case HomeEvent.anonLimitReached:
+        if (mounted) _showAnonUpsellDialog();
     }
+  }
+
+  void _showAnonUpsellDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.card_giftcard, size: 40, color: Colors.orange),
+        title: const Text('Guest Minutes Used Up'),
+        content: const Text(
+          'You have used all 100 free guest minutes.\n\n'
+          'Create a free account and get 100 extra minutes as a welcome bonus.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Later'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+              );
+            },
+            child: const Text('Create Account'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
