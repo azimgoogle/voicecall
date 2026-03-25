@@ -140,6 +140,7 @@ class HomeViewModel {
   String _userHandle = '';
   bool _isAnonymous = false;
   double _defaultVolume = 1.0;
+  bool _defaultMuted = false;
 
   CallLogEntry? _currentLogEntry;
 
@@ -169,6 +170,7 @@ class HomeViewModel {
   String? _pendingEndReason;
 
   static const String _callVolumeKey = 'call_volume';
+  static const String _callMuteKey = 'call_mute';
 
   // ── Public API ────────────────────────────────────────────────────────────
 
@@ -186,6 +188,7 @@ class HomeViewModel {
 
     final prefs = await SharedPreferences.getInstance();
     _defaultVolume = prefs.getDouble(_callVolumeKey) ?? 1.0;
+    _defaultMuted = prefs.getBool(_callMuteKey) ?? false;
 
     _listenForIncomingCalls();
     await _foreground.start();
@@ -305,8 +308,18 @@ class HomeViewModel {
           startedAt: value.startedAt,
           turnServer: turnServer,
           volume: _defaultVolume,
-          muted: false,
+          muted: _defaultMuted,
         ));
+        // Sync notification mute state with persisted value (use case hardcodes false).
+        if (_defaultMuted) {
+          unawaited(_peerConnection.setRemoteVolume(0.0));
+          unawaited(_foreground.updateNotification(
+            'In call...',
+            showEndCall: true,
+            showMute: true,
+            isMuted: true,
+          ));
+        }
         _startStatsTracking();
         _callConnected = false;
         _callTimeoutTimer = Timer(const Duration(seconds: 30), () {
@@ -370,7 +383,17 @@ class HomeViewModel {
           callId: callId,
           startedAt: _currentLogEntry!.startedAt,
           turnServer: 'both',
+          muted: _defaultMuted,
         ));
+        if (_defaultMuted) {
+          unawaited(_peerConnection.setMicEnabled(false));
+          unawaited(_foreground.updateNotification(
+            'In call...',
+            showEndCall: true,
+            showMute: true,
+            isMuted: true,
+          ));
+        }
 
       case Err(:final error):
         _crashReporter.recordError(error, null, reason: 'answerCall');
@@ -446,21 +469,34 @@ class HomeViewModel {
     _emit(const Idle());
   }
 
-  /// Mutes or unmutes by setting WebRTC volume to 0 / saved level.
+  /// Mutes or unmutes. Caller controls incoming volume; callee controls outgoing mic.
+  /// Persisted across calls (like volume).
   Future<void> applyMute(bool muted) async {
     final current = _state;
     if (current is! ActiveCall || current.muted == muted) return;
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('call_mute', muted);
-    await _peerConnection.setRemoteVolume(muted ? 0.0 : current.volume);
+    _defaultMuted = muted;
+
+    // Emit state and update notification BEFORE audio I/O so that UI and
+    // notification are always in sync — even if the audio call below throws
+    // (exceptions are swallowed when applyMute's Future is discarded by the
+    // void-typed onMuteToggled callback in CallScreen).
+    _emit(current.copyWith(muted: muted));
     await _foreground.updateNotification(
       'In call...',
       showEndCall: true,
       showMute: true,
       isMuted: muted,
     );
-    _emit(current.copyWith(muted: muted));
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_callMuteKey, muted);
+
+    if (current.isCaller) {
+      await _peerConnection.setRemoteVolume(muted ? 0.0 : current.volume);
+    } else {
+      await _peerConnection.setMicEnabled(!muted);
+    }
   }
 
   /// Adjusts the per-call WebRTC volume. Persisted across calls.

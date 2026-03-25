@@ -652,6 +652,7 @@ void _stubAll({
   when(() => pc.init(isCaller: any(named: 'isCaller')))
       .thenAnswer((_) async {});
   when(() => pc.setRemoteVolume(any())).thenAnswer((_) async {});
+  when(() => pc.setMicEnabled(any())).thenAnswer((_) async {});
   when(() => pc.createOffer()).thenAnswer(
       (_) async => const SessionDescription(sdp: 'offer_sdp', type: 'offer'));
   when(() => pc.createAnswer()).thenAnswer(

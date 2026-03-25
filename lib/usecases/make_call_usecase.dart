@@ -37,7 +37,6 @@ class MakeCallUseCase {
         _crashReporter = crashReporter;
 
   static const String _lastRemoteIdKey = 'last_remote_id';
-  static const String _callMuteKey = 'call_mute';
 
   /// Initiates a call from [callerId] to [remoteId] using [turnServer].
   ///
@@ -64,7 +63,6 @@ class MakeCallUseCase {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_lastRemoteIdKey, remoteHandle);
-      await prefs.setBool(_callMuteKey, false);
 
       final callId = _signaling.generateCallId(callerId, remoteId);
       final logEntry = CallLogEntry(

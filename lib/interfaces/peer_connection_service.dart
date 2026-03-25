@@ -56,6 +56,9 @@ abstract class PeerConnectionService {
   /// Safe to call before the remote track has arrived.
   Future<void> setRemoteVolume(double volume);
 
+  /// Enable or disable the local microphone track (callee mute/unmute).
+  Future<void> setMicEnabled(bool enabled);
+
   /// Inspect the active ICE path post-call to detect the relay used.
   /// Returns one of: 'direct' | 'stun' | 'metered' | 'expressturn' | 'turn' | 'unknown'
   Future<String> resolveActualTurnUsed();

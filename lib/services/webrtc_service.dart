@@ -250,6 +250,11 @@ class WebRtcService implements PeerConnectionService {
   }
 
   @override
+  Future<void> setMicEnabled(bool enabled) async {
+    _localStream?.getAudioTracks().forEach((t) => t.enabled = enabled);
+  }
+
+  @override
   Future<String> resolveActualTurnUsed() async {
     if (_pc == null) return 'unknown';
     try {

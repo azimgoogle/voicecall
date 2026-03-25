@@ -109,8 +109,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _viewModel.endCall();
     } else if (data == 'mute') {
       _viewModel.applyMute(true);
+      _callScreenKey.currentState?.setMuted(true);
     } else if (data == 'unmute') {
       _viewModel.applyMute(false);
+      _callScreenKey.currentState?.setMuted(false);
     }
   }
 
