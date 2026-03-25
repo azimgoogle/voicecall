@@ -16,7 +16,10 @@ Production 1-to-1 audio calling app for families. WebRTC for audio, Firebase Rea
 - `firebase_core: ^3.12.1` + `firebase_database: ^11.3.4` — Realtime Database signaling
 - `firebase_analytics: ^11.3.3` — product-metric event logging (call funnel, quality)
 - `firebase_crashlytics: ^4.3.3` — non-fatal error recording, breadcrumbs, custom keys
-- `shared_preferences: ^2.5.3` — persist userId, volume, mute, last remote ID
+- `firebase_auth: ^5.x` — Firebase Authentication (Google, email/password, anonymous)
+- `google_sign_in: ^6.x` — Google OAuth for Firebase Auth
+- `firebase_remote_config: ^5.x` — runtime feature flags (weekly limit, turn selector, email sign-in toggle)
+- `shared_preferences: ^2.5.3` — persist volume, mute, last remote ID, anon usage counter
 - `permission_handler: ^11.4.0` — runtime microphone permission
 - `flutter_foreground_task: ^9.2.0` — Android foreground service (keeps process alive)
 - `http: ^1.2.2` — fetch Metered TURN credentials
@@ -80,6 +83,8 @@ The codebase follows **Ports & Adapters (Hexagonal Architecture)** with **MVVM**
           │  SettingsRepository                 │
           │  CrashReporter                      │
           │  AnalyticsRepository                │
+          │  AuthRepository                     │
+          │  RemoteConfigRepository             │
           └─────────────────┬──────────────────┘
                             │ implemented by
           ┌─────────────────┴──────────────────┐
@@ -92,6 +97,8 @@ The codebase follows **Ports & Adapters (Hexagonal Architecture)** with **MVVM**
           │  SettingsService                    │
           │  FirebaseCrashReporter              │
           │  FirebaseAnalyticsReporter          │
+          │  FirebaseAuthService                │
+          │  FirebaseRemoteConfigService        │
           └─────────────────────────────────────┘
 ```
 
@@ -175,6 +182,12 @@ Device A (caller)               Firebase RTDB              Device B (callee)
   caller: "{userId}"
   callee: "{userId}"
   cancelled: true                 ← set by caller on hang-up before answer
+
+/emailToUid/{encodedHandle}       ← written on every auth; dots replaced with commas
+  → "{uid}"
+
+/userProfiles/{uid}/
+  email: "{handle}"               ← email for registered users; shortUidHash(uid) for anonymous
 ```
 
 Call ID format: `{callerId}_{calleeId}_{timestampMs}`
@@ -185,11 +198,12 @@ Call ID format: `{callerId}_{calleeId}_{timestampMs}`
 
 ```
 lib/
-  main.dart                         ← 2-liner: AppBootstrapper.boot() + runApp()
+  main.dart                         ← AppBootstrapper.boot() → PermissionScreen or LoginScreen
   core/
-    app_bootstrapper.dart           ← Firebase init, DI, foreground, userId check
+    app_bootstrapper.dart           ← Firebase init, DI, foreground, Remote Config fetch, Auth check
     result.dart                     ← Result<T,E>, Ok, Err, Unit
     app_error.dart                  ← SignalingError, ConnectionError, AudioError
+    uid_utils.dart                  ← shortUidHash(): 6-char display handle for anonymous users
   di/
     service_locator.dart            ← get_it registrations (singletons + factory)
   models/
@@ -198,14 +212,16 @@ lib/
     ice_candidate_model.dart        ← Domain ICE candidate (no flutter_webrtc types)
     session_description.dart        ← Domain SDP wrapper
   interfaces/
-    peer_connection_service.dart    ← Abstract WebRTC port
+    peer_connection_service.dart    ← Abstract WebRTC port (incl. setMicEnabled)
     signaling_service.dart          ← Abstract signaling port
     audio_service.dart              ← Abstract audio session port
     foreground_service.dart         ← Abstract foreground notification port
     call_log_repository.dart        ← Abstract call history port
-    settings_repository.dart        ← Abstract settings port
+    settings_repository.dart        ← Abstract settings port (incl. anonGuestMinutesAllowed=100)
     crash_reporter.dart             ← Abstract crash-reporting port (log, recordError, setCustomKey, setUserIdentifier)
     analytics_repository.dart       ← Abstract analytics port (logEvent, setUserId)
+    auth_repository.dart            ← Abstract auth port (Google, email, anonymous, signOut)
+    remote_config_repository.dart   ← Abstract Remote Config port (weekly limit, turn selector, email sign-in toggle)
   viewmodels/
     home_view_model.dart            ← Call orchestration, state, events, timers
   usecases/
@@ -213,11 +229,13 @@ lib/
     answer_call_usecase.dart        ← Incoming call answer → Result<CallLogEntry,AppError>
     end_call_usecase.dart           ← Call teardown → Result<Unit,AppError>
   screens/
-    onboarding_screen.dart          ← First-launch: pick unique userId, check RTDB
+    login_screen.dart               ← Google / Email / Anonymous sign-in; routes to PermissionScreen
+    register_screen.dart            ← Email registration; routes to PermissionScreen
+    permission_screen.dart          ← Mic + notification permission request; auto-skips if already granted
     startup_error_screen.dart       ← Shown when AppBootstrapper.boot() throws (Firebase init failure)
     home_screen.dart                ← Pure StreamBuilder observer; no call logic
     call_screen.dart                ← Active call UI (timer, stats, volume, mute)
-    settings_screen.dart            ← Call log retention, auto-answer whitelist
+    settings_screen.dart            ← Call log retention, auto-answer whitelist, usage meters
     call_logs_screen.dart           ← Call history: duration, bytes, TURN used
   services/
     firebase_signaling.dart         ← SignalingService impl; Stream-based, _subs tracking
@@ -229,6 +247,8 @@ lib/
     settings_service.dart           ← SettingsService (implements SettingsRepository)
     firebase_crash_reporter.dart    ← FirebaseCrashReporter (implements CrashReporter via firebase_crashlytics)
     firebase_analytics_reporter.dart ← FirebaseAnalyticsReporter (implements AnalyticsRepository via firebase_analytics)
+    firebase_auth_service.dart      ← FirebaseAuthService (implements AuthRepository); writes /emailToUid + /userProfiles
+    firebase_remote_config_service.dart ← FirebaseRemoteConfigService (implements RemoteConfigRepository)
 
 test/
   widget_test.dart                  ← Placeholder (void main {}); no widget tests yet
@@ -261,7 +281,7 @@ flutter pub get                          # install dependencies
 flutter analyze                          # static analysis
 flutter run                              # run on connected Android device/emulator
 flutter build apk                        # build release APK
-flutter test test/                       # run all 74 unit tests
+flutter test test/                       # run all 75 unit tests
 flutter test test/ --reporter=expanded   # verbose per-test output
 ```
 
@@ -269,7 +289,7 @@ flutter test test/ --reporter=expanded   # verbose per-test output
 
 ## Key Decisions & Current Behavior
 
-- **Identity**: User picks a unique ID on first launch (OnboardingScreen checks RTDB). Stored in SharedPreferences. No Firebase Auth.
+- **Identity**: Firebase Auth (Google OAuth, email/password, or anonymous). On every successful auth, `FirebaseAuthService._afterAuth()` writes `/emailToUid/{encodedHandle}` and `/userProfiles/{uid}/email` to RTDB so peers can resolve a UID from a handle. For anonymous users the handle is `shortUidHash(uid)` — a 6-char alphanumeric derived from the UID. `HomeViewModel` reads `FirebaseAuth.instance.currentUser` to determine `_isAnonymous`.
 - **MVVM + use cases**: `HomeViewModel` owns all call orchestration. `HomeScreen` is a pure `StreamBuilder` observer. Three use cases (`MakeCallUseCase`, `AnswerCallUseCase`, `EndCallUseCase`) handle all I/O. All wired together via get_it DI.
 - **Sealed CallState**: `Idle | IncomingCall | ActiveCall`. The ViewModel emits state transitions; HomeScreen switches exhaustively. One-shot side-effects (snackbars, banners) go through `Stream<HomeEvent>`.
 - **Result type**: Use cases return `Result<T, AppError>` (sealed Ok/Err). Use cases wrap their bodies in try/catch. HomeViewModel pattern-matches and emits `HomeEvent.callSetupFailed` on `Err`.
@@ -294,6 +314,10 @@ flutter test test/ --reporter=expanded   # verbose per-test output
 - **Startup error recovery**: `main()` wraps `AppBootstrapper.boot()` in try/catch. If Firebase init fails (missing `google-services.json`, no network on first launch), `StartupErrorScreen` is shown with a Retry button instead of a silent crash.
 - **Microphone permission UX**: `HomeViewModel.makeCall()` and `answerCall()` check `Permission.microphone.status` before invoking the use case. If denied, `HomeEvent.microphonePermissionDenied` is emitted immediately and the use case is skipped. `HomeScreen` shows "Microphone permission is required. Please enable it in Settings." — a specific, actionable message instead of the generic "Call failed."
 - **`turn_server_selected` key (caller only)**: Named to distinguish the caller's *chosen configuration* (metered / expressturn / both) from the *actual relay type* (stun / direct / turn) determined post-call via `resolveActualTurnUsed()` and stored in the call log. Callee logs no equivalent key — `role=callee` already deterministically implies `both`.
+- **Auth flow + PermissionScreen**: Every auth path (Google, email, anonymous) routes to `PermissionScreen` before `HomeScreen`. `PermissionScreen.initState()` calls `Permission.microphone.isGranted`; if already granted it navigates straight to `HomeScreen` with no UI shown — returning users pass through transparently. `main()` routes signed-in users directly to `PermissionScreen` (same transparent-skip logic applies).
+- **Anonymous guest limits**: `SettingsRepository.anonGuestMinutesAllowed = 100` is a hard lifetime cap on call minutes for anonymous users, tracked via `getAnonSecondsUsed()` / `addAnonSeconds()` in `SettingsRepository`. Additionally, a per-week limit from Remote Config (`getWeeklyCallLimitMinutes()`) applies to all users; `0` disables it. Exceeding either limit fires `HomeEvent.weeklyLimitReached`.
+- **Remote Config flags**: `FirebaseRemoteConfigService` wraps `firebase_remote_config`. Three keys: `weekly_call_limit_minutes` (int, default 100 — use 0 to disable), `turn_selector_enabled` (bool, default false — show TURN picker in UI only to internal testers), `email_signin_enabled` (bool, default false — show email/password form on LoginScreen). `fetchAndActivate()` is called once in `AppBootstrapper.boot()`; failures fall back to in-app defaults silently.
+- **`setMicEnabled(bool)`**: New method on `PeerConnectionService` interface. Used by the callee side to mute/unmute their own microphone track mid-call. `HomeViewModel.applyMute()` routes per role: caller calls `setRemoteVolume(0/saved)`, callee calls `setMicEnabled(false/true)`.
 
 ---
 
@@ -303,8 +327,7 @@ Items still needed before full production release:
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| Critical | Firebase Security Rules | RTDB is likely open; lock down to authenticated users |
-| Critical | Firebase Auth | Replace custom ID system with proper auth (phone/anonymous) |
+| Critical | Firebase Security Rules | RTDB is open; lock down — all paths now require `auth != null` since every user has a Firebase Auth UID |
 | Critical | TURN credential proxy | Firebase Cloud Function to proxy Metered API; API key never in client |
 | High | FCM push notifications | App can't receive calls when force-closed |
 | High | Remaining `!` unwraps | Use cases have try/catch; raw service code still uses force-unwraps |
