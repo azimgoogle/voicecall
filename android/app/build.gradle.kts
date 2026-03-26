@@ -58,6 +58,12 @@ android {
         create("prod") {
             dimension = "environment"
             // Uses defaultConfig applicationId and main/res strings as-is.
+            // Strip x86/x86_64 (emulator-only ABIs) — real devices are arm64 or armv7.
+            // This alone cuts the APK by ~30 %. For Play Store (AAB) Google further
+            // splits per-ABI automatically, so users download only their arch.
+            ndk {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
         }
     }
 
