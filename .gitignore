@@ -54,3 +54,6 @@ android/app/google-services.json
 android/app/src/dev/google-services.json
 android/app/src/prod/google-services.json
 /wireframes.html
+
+# Store assets (screenshots, banners, graphics for Play Store listing)
+/store/
