@@ -23,8 +23,10 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordCtrl = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
-  bool _loading = false;
+  String? _loadingAction; // 'google' | 'email' | 'anonymous'
   String? _errorMessage;
+
+  bool get _loading => _loadingAction != null;
 
   @override
   void dispose() {
@@ -54,26 +56,20 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _signInWithGoogle() async {
-    setState(() {
-      _loading = true;
-      _errorMessage = null;
-    });
+    setState(() { _loadingAction = 'google'; _errorMessage = null; });
     try {
       await _auth.signInWithGoogle();
       _navigatePermissions();
     } catch (e) {
       _setError(e);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _loadingAction = null);
     }
   }
 
   Future<void> _signInWithEmail() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() {
-      _loading = true;
-      _errorMessage = null;
-    });
+    setState(() { _loadingAction = 'email'; _errorMessage = null; });
     try {
       await _auth.signInWithEmail(
         _emailCtrl.text.trim(),
@@ -83,22 +79,19 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       _setError(e);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _loadingAction = null);
     }
   }
 
   Future<void> _signInAnonymously() async {
-    setState(() {
-      _loading = true;
-      _errorMessage = null;
-    });
+    setState(() { _loadingAction = 'anonymous'; _errorMessage = null; });
     try {
       await _auth.signInAnonymously();
       _navigatePermissions();
     } catch (e) {
       _setError(e);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _loadingAction = null);
     }
   }
 
@@ -118,37 +111,58 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'Nest Call',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Sign in to continue',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 40),
+      body: Stack(
+        children: [
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'Nest Call',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _loadingAction == 'google'
+                            ? 'Signing in with Google...'
+                            : _loadingAction == 'anonymous'
+                                ? 'Setting up guest session...'
+                                : 'Sign in to continue',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: _loading ? Theme.of(context).colorScheme.primary : Colors.grey,
+                        ),
+                      ),
+                      const SizedBox(height: 40),
 
-                  // Google sign-in
-                  OutlinedButton.icon(
-                    onPressed: _loading ? null : _signInWithGoogle,
-                    icon: const _GoogleLogo(size: 20),
-                    label: const Text('Continue with Google'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                  ),
+                      // Google sign-in
+                      OutlinedButton(
+                        onPressed: _loading ? null : _signInWithGoogle,
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        child: _loadingAction == 'google'
+                            ? const SizedBox(
+                                height: 20, width: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _GoogleLogo(size: 20),
+                                  SizedBox(width: 10),
+                                  Text('Continue with Google'),
+                                ],
+                              ),
+                      ),
                   // Email/password form — shown only when enabled via Remote Config.
                   if (_remoteConfig.isEmailSignInEnabled()) ...[
                     const SizedBox(height: 24),
@@ -216,12 +230,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
-                      child: _loading
+                      child: _loadingAction == 'email'
                           ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2),
+                              height: 20, width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Text('Sign In'),
                     ),
@@ -232,19 +244,32 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: const Text("Don't have an account? Register"),
                     ),
                   ],
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: _loading ? null : _signInAnonymously,
-                    child: Text(
-                      'Continue as Guest',
-                      style: TextStyle(color: Colors.grey.shade600),
-                    ),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: _loading ? null : _signInAnonymously,
+                        child: _loadingAction == 'anonymous'
+                            ? const SizedBox(
+                                height: 18, width: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Text(
+                                'Continue as Guest',
+                                style: TextStyle(color: Colors.grey.shade600),
+                              ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
-        ),
+          // Top progress bar shown during any sign-in
+          if (_loading)
+            const Positioned(
+              top: 0, left: 0, right: 0,
+              child: LinearProgressIndicator(minHeight: 3),
+            ),
+        ],
       ),
     );
   }

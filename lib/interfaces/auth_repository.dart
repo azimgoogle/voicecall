@@ -38,6 +38,12 @@ abstract class AuthRepository {
   /// Sign out from all providers.
   Future<void> signOut();
 
+  /// Re-writes the RTDB handle↔UID mapping for the currently signed-in user.
+  /// Safe to call on every launch — ensures the mapping exists even if the
+  /// original write after sign-in failed (e.g. offline, rules not yet set up).
+  /// No-op if no user is signed in.
+  Future<void> syncProfile();
+
   /// Permanently delete the current user's account and all associated data.
   /// Throws [FirebaseAuthException] with code `requires-recent-login` if the
   /// session is too old — callers should prompt the user to re-authenticate.

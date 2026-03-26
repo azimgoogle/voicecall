@@ -37,8 +37,11 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _micPermissionDenied = false;
   bool _turnSelectorEnabled = false;
   List<CallLogEntry> _recentContacts = [];
+  bool _isCalling = false;
+  bool _isAnswering = false;
 
   late StreamSubscription<HomeEvent> _eventsSub;
+  late StreamSubscription<CallState> _stateSub;
 
   @override
   void initState() {
@@ -90,6 +93,11 @@ class _HomeScreenState extends State<HomeScreen> {
         isAnonymous: firebaseUser.isAnonymous);
     FlutterForegroundTask.addTaskDataCallback(_onForegroundData);
     _eventsSub = _viewModel.events.listen(_onEvent);
+    _stateSub = _viewModel.stateStream.listen((state) {
+      if (state is Idle && mounted) {
+        setState(() { _isCalling = false; _isAnswering = false; });
+      }
+    });
 
     final micStatus = await Permission.microphone.status;
     if (mounted && !micStatus.isGranted) {
@@ -127,6 +135,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       case HomeEvent.calleeBusy:
         if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text('${_remoteIdController.text.trim()} is busy.'),
             backgroundColor: Colors.orange,
@@ -136,6 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       case HomeEvent.callTimeout:
         if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('No answer. Call ended.'),
             backgroundColor: Colors.red,
@@ -145,6 +155,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       case HomeEvent.callSetupFailed:
         if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Call failed to connect. Please try again.'),
             backgroundColor: Colors.red,
@@ -152,8 +163,22 @@ class _HomeScreenState extends State<HomeScreen> {
           ));
         }
 
+      case HomeEvent.calleeNotFound:
+        if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+              '"${_remoteIdController.text.trim()}" is not registered. '
+              'Check the handle and try again.',
+            ),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 4),
+          ));
+        }
+
       case HomeEvent.microphonePermissionDenied:
         if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text(
               'Microphone permission is required. '
@@ -166,6 +191,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       case HomeEvent.weeklyLimitReached:
         if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Weekly call limit reached. Resets on Monday.'),
             backgroundColor: Colors.orange,
@@ -174,7 +200,10 @@ class _HomeScreenState extends State<HomeScreen> {
         }
 
       case HomeEvent.anonLimitReached:
-        if (mounted) _showAnonUpsellDialog();
+        if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
+          _showAnonUpsellDialog();
+        }
     }
   }
 
@@ -211,6 +240,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _eventsSub.cancel();
+    _stateSub.cancel();
     _remoteIdController.dispose();
     _inputFocusNode.dispose();
     FlutterForegroundTask.removeTaskDataCallback(_onForegroundData);
@@ -268,16 +298,34 @@ class _HomeScreenState extends State<HomeScreen> {
                   fontSize: 28, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 48),
-            ElevatedButton.icon(
-              onPressed: () => _viewModel.acceptIncomingCall(state.callId),
-              icon: const Icon(Icons.phone),
-              label: const Text('Answer', style: TextStyle(fontSize: 18)),
+            ElevatedButton(
+              onPressed: _isAnswering
+                  ? null
+                  : () {
+                      setState(() => _isAnswering = true);
+                      _viewModel.acceptIncomingCall(state.callId);
+                    },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(
                     horizontal: 48, vertical: 16),
               ),
+              child: _isAnswering
+                  ? const SizedBox(
+                      height: 22, width: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5, color: Colors.white,
+                      ),
+                    )
+                  : const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.phone),
+                        SizedBox(width: 8),
+                        Text('Answer', style: TextStyle(fontSize: 18)),
+                      ],
+                    ),
             ),
           ],
         ),
@@ -298,6 +346,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _makeCallTo(String remoteId) {
     if (remoteId.isEmpty) return;
     _remoteIdController.text = remoteId;
+    setState(() => _isCalling = true);
     _viewModel.makeCall(remoteId, _selectedTurnServer);
   }
 
@@ -368,10 +417,26 @@ class _HomeScreenState extends State<HomeScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: _remoteIdController.text.trim().isNotEmpty
+                      onPressed: (!_isCalling && _remoteIdController.text.trim().isNotEmpty)
                           ? () => _makeCallTo(_remoteIdController.text.trim())
                           : null,
-                      child: const Text('Call'),
+                      child: _isCalling
+                          ? const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  height: 16, width: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                SizedBox(width: 10),
+                                Text('Calling...'),
+                              ],
+                            )
+                          : const Text('Call'),
                     ),
                   ),
                   if (_recentContacts.isNotEmpty) ...[

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import '../di/service_locator.dart';
+import '../interfaces/auth_repository.dart';
 import '../interfaces/remote_config_repository.dart';
 import '../services/foreground_service.dart';
 
@@ -49,6 +50,15 @@ abstract final class AppBootstrapper {
     // fetchAndActivate() never throws — failures fall back to in-app defaults.
     await sl<RemoteConfigRepository>().fetchAndActivate();
 
-    return FirebaseAuth.instance.currentUser != null;
+    final hasUser = FirebaseAuth.instance.currentUser != null;
+
+    // Re-sync the RTDB handle↔UID mapping on every launch so returning users
+    // (especially Google sign-in users) are always discoverable by handle,
+    // even if the original post-sign-in write failed (offline, rules, etc.).
+    if (hasUser) {
+      await sl<AuthRepository>().syncProfile();
+    }
+
+    return hasUser;
   }
 }

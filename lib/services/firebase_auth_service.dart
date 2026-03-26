@@ -77,6 +77,13 @@ class FirebaseAuthService implements AuthRepository {
   }
 
   @override
+  Future<void> syncProfile() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    await _afterAuth(user);
+  }
+
+  @override
   Future<void> deleteAccount() async {
     final user = _auth.currentUser;
     if (user == null) return;

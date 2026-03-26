@@ -37,6 +37,9 @@ enum HomeEvent {
   /// A use-case failed to set up or tear down a call; show an error snackbar.
   callSetupFailed,
 
+  /// The entered handle was not found in the directory; no call was attempted.
+  calleeNotFound,
+
   /// Microphone permission was not granted; user needs to enable it in Settings.
   microphonePermissionDenied,
 
@@ -238,7 +241,7 @@ class HomeViewModel {
     // Resolve handle → UID. Emit failure immediately if not registered.
     final remoteId = await _signaling.lookupUidByHandle(remoteHandle);
     if (remoteId == null) {
-      _emitEvent(HomeEvent.callSetupFailed);
+      _emitEvent(HomeEvent.calleeNotFound);
       return;
     }
 
