@@ -27,8 +27,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+    kotlin {
+        compilerOptions {
+            jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        }
     }
 
     defaultConfig {
@@ -87,14 +89,14 @@ android {
             )
         }
     }
+
+    // Explicitly enable Crashlytics mapping file upload (default is true, but
+    // making it explicit ensures it's never accidentally disabled).
+    firebaseCrashlytics {
+        mappingFileUploadEnabled = true
+    }
 }
 
 flutter {
     source = "../.."
-}
-
-// Explicitly enable Crashlytics mapping file upload (default is true, but
-// making it explicit ensures it's never accidentally disabled).
-firebaseCrashlytics {
-    mappingFileUploadEnabled = true
 }

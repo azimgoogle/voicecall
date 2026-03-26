@@ -482,6 +482,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                   ],
+                  const SizedBox(height: 48),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 400),
+                    child: _recentContacts.length < 3
+                        ? const ConnectedIllustration(
+                            key: ValueKey('illustration'))
+                        : const SizedBox.shrink(),
+                  ),
                   const SizedBox(height: 24),
                 ],
               ),
@@ -612,6 +620,109 @@ class _HomeScreenState extends State<HomeScreen> {
         TextButton(
           onPressed: _requestMicPermission,
           child: const Text('Grant', style: TextStyle(color: Colors.white)),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Connected illustration ────────────────────────────────────────────────────
+
+/// Decorative illustration shown on the idle home screen when the recent-calls
+/// list has fewer than 3 entries. Exported only for widget tests.
+@visibleForTesting
+class ConnectedIllustration extends StatelessWidget {
+  const ConnectedIllustration({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Avatar row is not padded horizontally — it needs the full width.
+        // FittedBox scales it down on narrow screens so nothing clips.
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: _buildAvatarRow(),
+        ),
+        const SizedBox(height: 20),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 32),
+          child: Text(
+            'Always connected',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF674FA3),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 32),
+          child: Text(
+            'Enter a handle above to call your family',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 15,
+              color: Color(0xFF8A7890),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAvatarRow() {
+    const avatarWidget = CircleAvatar(
+      radius: 44,
+      backgroundColor: Color(0xFFD0C4E8),
+      child: Icon(Icons.person, color: Color(0xFF503198), size: 44),
+    );
+
+    final dotsAndHeart = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (int i = 0; i < 5; i++) ...[
+          if (i > 0) const SizedBox(width: 10),
+          if (i == 2)
+            const Icon(Icons.favorite, color: Color(0xFF674FA3), size: 28)
+          else
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD0C4E8),
+                borderRadius: BorderRadius.circular(5),
+              ),
+            ),
+        ],
+      ],
+    );
+
+    // The pill glow is sized to snugly contain both avatars (row is ~332 px wide).
+    // FittedBox in the parent handles any screen narrower than that.
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Container(
+          width: 360,
+          height: 160,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(80),
+            color: const Color(0xFFEDE5FC).withValues(alpha: 0.5),
+          ),
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            avatarWidget,
+            const SizedBox(width: 24),
+            dotsAndHeart,
+            const SizedBox(width: 24),
+            avatarWidget,
+          ],
         ),
       ],
     );
