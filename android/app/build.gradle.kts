@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-    namespace = "com.familycall.children_voice_call"
+    namespace = "com.zunova.nestcall"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -22,7 +22,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.familycall.children_voice_call"
+        applicationId = "com.zunova.nestcall"
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -35,8 +35,8 @@ android {
     //            flutter build apk --flavor prod
     //
     // google-services.json per flavor:
-    //   android/app/src/dev/google-services.json   (app ID: ...children_voice_call.dev)
-    //   android/app/src/prod/google-services.json  (app ID: ...children_voice_call)
+    //   android/app/src/dev/google-services.json   (app ID: ...nestcall.dev)
+    //   android/app/src/prod/google-services.json  (app ID: ...nestcall)
     flavorDimensions += "environment"
     productFlavors {
         create("dev") {

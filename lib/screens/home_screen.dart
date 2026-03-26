@@ -306,7 +306,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildIdle() {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Family Voice Call'),
+        title: const Text('Nest Call'),
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),

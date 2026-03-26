@@ -7,8 +7,8 @@ void initForegroundService() {
   FlutterForegroundTask.initCommunicationPort();
   FlutterForegroundTask.init(
     androidNotificationOptions: AndroidNotificationOptions(
-      channelId: 'voice_call_service',
-      channelName: 'Voice Call Service',
+      channelId: 'nest_call_service',
+      channelName: 'Nest Call Service',
       channelDescription: 'Keeps the app alive to receive calls',
       onlyAlertOnce: true,
     ),
@@ -29,7 +29,7 @@ void initForegroundService() {
 Future<void> startForegroundService() async {
   await FlutterForegroundTask.startService(
     serviceId: 100,
-    notificationTitle: 'Voice Call',
+    notificationTitle: 'Nest Call',
     notificationText: 'Waiting for calls...',
     // 'ic_notification' matches the <meta-data android:name="ic_notification">
     // entry in the ForegroundService declaration in AndroidManifest.xml.
@@ -50,7 +50,7 @@ Future<void> updateForegroundNotification(
   bool isMuted = false,
 }) async {
   await FlutterForegroundTask.updateService(
-    notificationTitle: 'Voice Call',
+    notificationTitle: 'Nest Call',
     notificationText: text,
     notificationButtons: [
       if (showMute)

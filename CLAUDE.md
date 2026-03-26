@@ -7,7 +7,7 @@
 
 ## What This Is
 
-Production 1-to-1 audio calling app for families. WebRTC for audio, Firebase Realtime Database for signaling, Android target. Package name: `com.familycall.children_voice_call`.
+Production 1-to-1 audio calling app for families. WebRTC for audio, Firebase Realtime Database for signaling, Android target. Package name: `com.zunova.nestcall`.
 
 ## Tech Stack
 

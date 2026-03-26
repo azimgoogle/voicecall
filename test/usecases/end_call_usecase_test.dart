@@ -2,9 +2,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:family_call/core/result.dart';
-import 'package:family_call/models/call_log_entry.dart';
-import 'package:family_call/usecases/end_call_usecase.dart';
+import 'package:nest_call/core/result.dart';
+import 'package:nest_call/models/call_log_entry.dart';
+import 'package:nest_call/usecases/end_call_usecase.dart';
 
 import '../mocks.dart';
 

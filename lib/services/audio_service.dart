@@ -3,9 +3,9 @@ import 'package:flutter/services.dart';
 import '../interfaces/audio_service.dart';
 
 /// Android implementation of [AudioService] that talks to the platform via
-/// the `com.familycall/audio` MethodChannel.
+/// the `com.zunova.nestcall/audio` MethodChannel.
 class PlatformAudioService implements AudioService {
-  static const _channel = MethodChannel('com.familycall/audio');
+  static const _channel = MethodChannel('com.zunova.nestcall/audio');
 
   /// Set AudioManager to MODE_IN_COMMUNICATION, request audio focus,
   /// and start listening for wired headset plug/unplug events.

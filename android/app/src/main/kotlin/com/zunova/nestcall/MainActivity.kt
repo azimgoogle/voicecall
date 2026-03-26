@@ -1,4 +1,4 @@
-package com.familycall.children_voice_call
+package com.zunova.nestcall
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -21,7 +21,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
 
-    private val channelName = "com.familycall/audio"
+    private val channelName = "com.zunova.nestcall/audio"
     private lateinit var audioManager: AudioManager
     private var noisyReceiver: BroadcastReceiver? = null
     private var scoReceiver: BroadcastReceiver? = null
@@ -109,7 +109,7 @@ class MainActivity : FlutterActivity() {
                         @Suppress("DEPRECATION")
                         val wl = powerManager.newWakeLock(
                             PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
-                            "VoiceCall::Proximity"
+                            "NestCall::Proximity"
                         )
                         wl.acquire(10 * 60 * 1000L) // 10 min max
                         proximityWakeLock = wl

@@ -6,11 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:family_call/models/call_log_entry.dart';
-import 'package:family_call/models/call_state.dart';
-import 'package:family_call/models/ice_candidate_model.dart';
-import 'package:family_call/models/session_description.dart';
-import 'package:family_call/viewmodels/home_view_model.dart';
+import 'package:nest_call/models/call_log_entry.dart';
+import 'package:nest_call/models/call_state.dart';
+import 'package:nest_call/models/ice_candidate_model.dart';
+import 'package:nest_call/models/session_description.dart';
+import 'package:nest_call/viewmodels/home_view_model.dart';
 
 import '../mocks.dart';
 

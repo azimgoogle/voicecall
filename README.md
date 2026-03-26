@@ -1,4 +1,4 @@
-# Voice Call
+# Nest Call
 
 Minimal 1-to-1 audio calling app using WebRTC + Firebase Realtime Database for signaling. Android only.
 
@@ -7,7 +7,7 @@ Minimal 1-to-1 audio calling app using WebRTC + Firebase Realtime Database for s
 ### 1. Firebase Project
 
 1. Go to [Firebase Console](https://console.firebase.google.com/) and create a new project (or use existing)
-2. Add an **Android app** with package name `com.familycall.children_voice_call`
+2. Add an **Android app** with package name `com.zunova.nestcall`
 3. Download `google-services.json` and place it in `android/app/`
 4. Enable **Realtime Database** (not Firestore) in the Firebase console
 5. Set database rules to allow read/write for testing:
