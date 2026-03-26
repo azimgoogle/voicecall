@@ -86,3 +86,9 @@ android {
 flutter {
     source = "../.."
 }
+
+// Explicitly enable Crashlytics mapping file upload (default is true, but
+// making it explicit ensures it's never accidentally disabled).
+firebaseCrashlytics {
+    mappingFileUploadEnabled = true
+}

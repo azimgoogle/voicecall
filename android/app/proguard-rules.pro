@@ -1,3 +1,6 @@
+# Preserve source file names and line numbers for Crashlytics stack traces
+-keepattributes SourceFile,LineNumberTable
+
 # Flutter WebRTC
 -keep class org.webrtc.** { *; }
 
