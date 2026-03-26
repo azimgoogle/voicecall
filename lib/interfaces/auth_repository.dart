@@ -37,4 +37,9 @@ abstract class AuthRepository {
 
   /// Sign out from all providers.
   Future<void> signOut();
+
+  /// Permanently delete the current user's account and all associated data.
+  /// Throws [FirebaseAuthException] with code `requires-recent-login` if the
+  /// session is too old — callers should prompt the user to re-authenticate.
+  Future<void> deleteAccount();
 }

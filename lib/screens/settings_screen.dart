@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../di/service_locator.dart';
+import '../interfaces/auth_repository.dart';
 import '../interfaces/call_log_repository.dart';
 import '../interfaces/remote_config_repository.dart';
 import '../interfaces/settings_repository.dart';
@@ -20,6 +21,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _settings = sl<SettingsRepository>();
   final _logService = sl<CallLogRepository>();
   final _remoteConfig = sl<RemoteConfigRepository>();
+  final _auth = sl<AuthRepository>();
 
   int _retentionDays = SettingsRepository.defaultRetentionDays;
   List<String> _whitelist = [];
@@ -101,6 +103,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _suggestions.remove(trimmed);
       _addController.clear();
     });
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Account'),
+        content: const Text(
+          'This will permanently delete your account and all associated data. '
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('No'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes, Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await _auth.deleteAccount();
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (_) => false,
+      );
+    } on Exception catch (e) {
+      if (!mounted) return;
+      final message = e.toString().contains('requires-recent-login')
+          ? 'Please sign out and sign in again before deleting your account.'
+          : 'Failed to delete account. Please try again.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
   }
 
   Future<void> _removeFromWhitelist(String id) async {
@@ -273,6 +318,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         .toList(),
                   ),
                 ],
+
+                // ── Delete Account ──────────────────────────────────────
+                const SizedBox(height: 32),
+                const Divider(),
+                const SizedBox(height: 20),
+                Text('Account',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: const BorderSide(color: Colors.red),
+                    ),
+                    onPressed: _confirmDeleteAccount,
+                    icon: const Icon(Icons.delete_forever_outlined),
+                    label: const Text('Delete Account'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Permanently removes your account and all associated data.',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
               ],
             ),
     );

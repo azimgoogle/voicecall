@@ -76,6 +76,27 @@ class FirebaseAuthService implements AuthRepository {
     await _auth.signOut();
   }
 
+  @override
+  Future<void> deleteAccount() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    final email = user.email;
+    final handle = email ?? shortUidHash(user.uid);
+    final encodedHandle = handle.replaceAll('.', ',');
+
+    // Remove RTDB entries — best effort, don't block deletion on failure.
+    try {
+      await Future.wait([
+        _db.child('emailToUid/$encodedHandle').remove(),
+        _db.child('userProfiles/${user.uid}').remove(),
+      ]);
+    } catch (_) {}
+
+    await _googleSignIn.signOut();
+    await user.delete(); // throws FirebaseAuthException(requires-recent-login) if session is stale
+  }
+
   /// Writes the handle↔UID mapping to RTDB after any successful auth, then
   /// returns an [AuthUser]. Silently ignores RTDB write failures — the user
   /// is still signed in even if the mapping write fails.
