@@ -8,6 +8,7 @@ import 'package:flutter_native_splash/flutter_native_splash.dart';
 
 import 'core/app_bootstrapper.dart';
 import 'screens/login_screen.dart';
+import 'services/push_message_service.dart';
 import 'screens/permission_screen.dart';
 import 'screens/startup_error_screen.dart';
 
@@ -16,8 +17,8 @@ import 'screens/startup_error_screen.dart';
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  // Notification messages are displayed automatically by the FCM SDK.
-  // Data-only messages can be acted on here when needed.
+  final body = (message.data['message'] as String?) ?? message.notification?.body;
+  if (body != null) await PushMessageService.store(body);
 }
 
 void main() async {

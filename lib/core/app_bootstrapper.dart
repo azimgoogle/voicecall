@@ -9,6 +9,7 @@ import '../di/service_locator.dart';
 import '../interfaces/auth_repository.dart';
 import '../interfaces/remote_config_repository.dart';
 import '../services/foreground_service.dart';
+import '../services/push_message_service.dart';
 
 /// Encapsulates all one-time startup tasks that must complete before [runApp].
 ///
@@ -36,6 +37,16 @@ abstract final class AppBootstrapper {
       badge: true,
       sound: true,
     );
+
+    // Log the FCM token so it can be copied for testing.
+    final token = await FirebaseMessaging.instance.getToken();
+    debugPrint('FCM Token: $token');
+
+    // Forward foreground data messages to HomeScreen via stream.
+    FirebaseMessaging.onMessage.listen((message) {
+      final body = (message.data['message'] as String?) ?? message.notification?.body;
+      if (body != null) PushMessageService.emit(body);
+    });
 
     // Enable Crashlytics crash collection (no-op in debug if disabled there).
     await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(

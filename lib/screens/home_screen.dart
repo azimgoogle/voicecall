@@ -8,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../core/uid_utils.dart';
 import '../di/service_locator.dart';
 import '../interfaces/auth_repository.dart';
+import '../services/push_message_service.dart';
 import '../interfaces/call_log_repository.dart';
 import '../interfaces/remote_config_repository.dart';
 import '../models/call_log_entry.dart';
@@ -42,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   late StreamSubscription<HomeEvent> _eventsSub;
   late StreamSubscription<CallState> _stateSub;
+  StreamSubscription<String>? _pushSub;
 
   @override
   void initState() {
@@ -103,6 +105,20 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted && !micStatus.isGranted) {
       setState(() => _micPermissionDenied = true);
     }
+
+    final pending = await PushMessageService.consumePending();
+    if (pending != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(pending)),
+      );
+    }
+    _pushSub = PushMessageService.messageStream.listen((msg) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg)),
+        );
+      }
+    });
 
     // Request focus after all setState calls have settled so that no subsequent
     // rebuild dismisses the keyboard again.
@@ -241,6 +257,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _eventsSub.cancel();
     _stateSub.cancel();
+    _pushSub?.cancel();
     _remoteIdController.dispose();
     _inputFocusNode.dispose();
     FlutterForegroundTask.removeTaskDataCallback(_onForegroundData);
