@@ -1,0 +1,51 @@
+/// Authenticated user value object — implementation-agnostic.
+class AuthUser {
+  final String uid;
+  final String? email;
+  const AuthUser({required this.uid, this.email});
+}
+
+/// Abstract authentication port.
+///
+/// Implementations may use Firebase Auth, Supabase, a custom backend, etc.
+/// Swap the concrete class in [service_locator.dart] without touching screens
+/// or the ViewModel.
+///
+/// All methods throw on failure — callers (screens) wrap in try/catch.
+abstract class AuthRepository {
+  /// Currently signed-in user, or null if not authenticated.
+  AuthUser? get currentUser;
+
+  /// Stream that emits whenever the auth state changes (sign-in / sign-out).
+  Stream<AuthUser?> get authStateChanges;
+
+  /// Sign in with Google. Throws if the user cancels or on network errors.
+  Future<AuthUser> signInWithGoogle();
+
+  /// Sign in with [email] + [password]. Throws [FirebaseAuthException] on
+  /// wrong credentials, unverified email, etc.
+  Future<AuthUser> signInWithEmail(String email, String password);
+
+  /// Create a new account with [email] + [password]. Throws on duplicate
+  /// email, weak password, etc.
+  Future<AuthUser> registerWithEmail(String email, String password);
+
+  /// Sign in anonymously — creates a temporary Firebase account with no email.
+  /// The user's handle will be their Firebase UID.
+  /// Throws on network errors.
+  Future<AuthUser> signInAnonymously();
+
+  /// Sign out from all providers.
+  Future<void> signOut();
+
+  /// Re-writes the RTDB handle↔UID mapping for the currently signed-in user.
+  /// Safe to call on every launch — ensures the mapping exists even if the
+  /// original write after sign-in failed (e.g. offline, rules not yet set up).
+  /// No-op if no user is signed in.
+  Future<void> syncProfile();
+
+  /// Permanently delete the current user's account and all associated data.
+  /// Throws [FirebaseAuthException] with code `requires-recent-login` if the
+  /// session is too old — callers should prompt the user to re-authenticate.
+  Future<void> deleteAccount();
+}

@@ -4,22 +4,56 @@ import 'dart:convert';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 
-class WebRtcService {
+import '../interfaces/peer_connection_service.dart';
+import '../models/ice_candidate_model.dart';
+import '../models/session_description.dart';
+
+/// flutter_webrtc implementation of [PeerConnectionService].
+///
+/// All WebRTC library types (RTCSessionDescription, RTCIceCandidate, etc.)
+/// are fully contained here. Callers only see domain models, so this class
+/// can be swapped for a different media stack without touching any other file.
+class WebRtcService implements PeerConnectionService {
   RTCPeerConnection? _pc;
   MediaStream? _localStream;
   Timer? _statsTimer;
   final _statsController =
       StreamController<Map<String, dynamic>>.broadcast();
 
-  /// Stream of live stats: `{bytesSent: int, bytesReceived: int}`.
-  /// Emits every second while the call is active.
+  /// Remote audio track received by the caller — used for volume control.
+  MediaStreamTrack? _remoteAudioTrack;
+
+  /// Volume to apply as soon as the remote track arrives (0.0–1.0).
+  double? _pendingVolume;
+
+  // ── PeerConnectionService: per-call event stream controllers ──────────────
+  //
+  // Created fresh on every [init] call and closed on [close], so that
+  // subscribers automatically receive a done event at call teardown.
+
+  late StreamController<void> _connectionLostController;
+  late StreamController<void> _connectionEstablishedController;
+  late StreamController<IceCandidateModel> _iceCandidateController;
+
+  @override
+  Stream<void> get connectionLost => _connectionLostController.stream;
+
+  @override
+  Stream<void> get connectionEstablished =>
+      _connectionEstablishedController.stream;
+
+  @override
+  Stream<IceCandidateModel> get iceCandidate => _iceCandidateController.stream;
+
+  @override
   Stream<Map<String, dynamic>> get statsStream => _statsController.stream;
+
+  // ── TURN / ICE server config ───────────────────────────────────────────────
 
   static const String _meteredApiKey = '21601028951dce7b0c1a015657dd0a3ce67d';
   static const String _meteredApiUrl =
       'https://voicecallpoc.metered.live/api/v1/turn/credentials?apiKey=$_meteredApiKey';
 
-  /// ExpressTURN static credentials (free tier — refreshed manually from dashboard).
   static const List<Map<String, dynamic>> _expressTurnServers = [
     {
       'urls': 'turn:free.expressturn.com:3478',
@@ -38,21 +72,13 @@ class WebRtcService {
     },
   ];
 
-  /// Fetch ICE servers based on the selected TURN provider.
-  ///
-  /// [turnServer] options:
-  ///   - 'metered'     → Metered.ca only (dynamic credentials fetched via API)
-  ///   - 'expressturn' → ExpressTURN only (static credentials, no HTTP fetch)
-  ///   - 'both'        → Metered + ExpressTURN merged (used by callee)
   Future<List<Map<String, dynamic>>> _fetchIceServers({
     String turnServer = 'both',
   }) async {
     if (turnServer == 'expressturn') {
-      // Static credentials — no network call needed
       return [..._stunServers, ..._expressTurnServers];
     }
 
-    // For 'metered' or 'both', fetch dynamic Metered credentials
     try {
       final response = await http
           .get(Uri.parse(_meteredApiUrl))
@@ -63,32 +89,32 @@ class WebRtcService {
         final meteredServers = data.cast<Map<String, dynamic>>();
 
         if (turnServer == 'metered') {
-          return meteredServers; // Metered only (includes their STUN entries)
+          return meteredServers;
         }
-        // 'both': merge Metered + ExpressTURN
         return [...meteredServers, ..._expressTurnServers];
       }
     } catch (_) {
       // Network error or timeout — fall through to fallback
     }
 
-    // Fallback when Metered fetch fails
     if (turnServer == 'metered') {
-      // Nothing we can do without credentials — STUN only
       return _stunServers;
     }
-    // 'both' fallback: at least use ExpressTURN + STUN
     return [..._stunServers, ..._expressTurnServers];
   }
 
-  /// Create peer connection and acquire audio-only local stream.
-  ///
+  // ── PeerConnectionService: lifecycle ──────────────────────────────────────
+
   /// One-way audio (callee → caller):
-  ///   - Caller: mic OFF (muted), listens to remote audio from callee
-  ///   - Callee: mic ON (sends audio), ignores remote audio from caller
-  ///
-  /// [turnServer]: 'metered' | 'expressturn' | 'both'
+  ///   - Caller: mic OFF, listens to remote audio from callee
+  ///   - Callee: mic ON, ignores remote audio from caller
+  @override
   Future<void> init({bool isCaller = false, String turnServer = 'both'}) async {
+    // Fresh per-call stream controllers — closed in [close].
+    _connectionLostController = StreamController<void>.broadcast();
+    _connectionEstablishedController = StreamController<void>.broadcast();
+    _iceCandidateController = StreamController<IceCandidateModel>.broadcast();
+
     final iceServers = await _fetchIceServers(turnServer: turnServer);
 
     final rtcConfig = {
@@ -97,12 +123,41 @@ class WebRtcService {
     };
 
     _pc = await createPeerConnection(rtcConfig);
+
+    bool connectionLostFired = false;
+    _pc!.onConnectionState = (RTCPeerConnectionState state) {
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        if (!_connectionEstablishedController.isClosed) {
+          _connectionEstablishedController.add(null);
+        }
+      }
+      if (connectionLostFired) return;
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateClosed ||
+          state ==
+              RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+        connectionLostFired = true;
+        if (!_connectionLostController.isClosed) {
+          _connectionLostController.add(null);
+        }
+      }
+    };
+
+    _pc!.onIceCandidate = (RTCIceCandidate c) {
+      if (!_iceCandidateController.isClosed) {
+        _iceCandidateController.add(IceCandidateModel(
+          candidate: c.candidate ?? '',
+          sdpMid: c.sdpMid,
+          sdpMLineIndex: c.sdpMLineIndex,
+        ));
+      }
+    };
+
     _localStream = await navigator.mediaDevices.getUserMedia({
       'audio': true,
       'video': false,
     });
 
-    // Caller: mute mic — caller only listens, never sends audio
     if (isCaller) {
       for (final track in _localStream!.getAudioTracks()) {
         track.enabled = false;
@@ -113,92 +168,105 @@ class WebRtcService {
       await _pc!.addTrack(track, _localStream!);
     }
 
-    // Callee: discard incoming remote audio — callee never hears caller
-    if (!isCaller) {
+    if (isCaller) {
       _pc!.onTrack = (event) {
-        // Discard remote tracks — callee doesn't play any audio
+        if (event.track.kind == 'audio') {
+          _remoteAudioTrack = event.track;
+          final pending = _pendingVolume;
+          if (pending != null) {
+            Helper.setVolume(pending, event.track);
+          }
+        }
+      };
+    } else {
+      _pc!.onTrack = (event) {
+        // Callee discards incoming audio — one-way design
       };
     }
 
     _startStatsPolling();
   }
 
-  void _startStatsPolling() {
-    _statsTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      if (_pc == null) return;
-      final reports = await _pc!.getStats();
-      int bytesSent = 0;
-      int bytesReceived = 0;
-      for (final report in reports) {
-        final values = report.values;
-        if (report.type == 'outbound-rtp') {
-          bytesSent += (values['bytesSent'] as num?)?.toInt() ?? 0;
-        } else if (report.type == 'inbound-rtp') {
-          bytesReceived += (values['bytesReceived'] as num?)?.toInt() ?? 0;
-        }
-      }
-      if (!_statsController.isClosed) {
-        _statsController.add({
-          'bytesSent': bytesSent,
-          'bytesReceived': bytesReceived,
-        });
-      }
-    });
+  @override
+  Future<void> close() async {
+    _statsTimer?.cancel();
+    _statsTimer = null;
+    _localStream?.getTracks().forEach((t) => t.stop());
+    _localStream?.dispose();
+    _localStream = null;
+    await _pc?.close();
+    _pc = null;
+    _remoteAudioTrack = null;
+    _pendingVolume = null;
+
+    // Close per-call controllers last — subscribers receive a done event
+    // signalling that no further connection events will be emitted.
+    await _connectionLostController.close();
+    await _connectionEstablishedController.close();
+    await _iceCandidateController.close();
   }
 
-  /// Create SDP offer.
-  Future<RTCSessionDescription> createOffer() async {
+  // ── PeerConnectionService: negotiation ────────────────────────────────────
+
+  @override
+  Future<SessionDescription> createOffer() async {
     final offer = await _pc!.createOffer();
     await _pc!.setLocalDescription(offer);
-    return offer;
+    return SessionDescription(sdp: offer.sdp!, type: offer.type!);
   }
 
-  /// Create SDP answer.
-  Future<RTCSessionDescription> createAnswer() async {
+  @override
+  Future<SessionDescription> createAnswer() async {
     final answer = await _pc!.createAnswer();
     await _pc!.setLocalDescription(answer);
-    return answer;
+    return SessionDescription(sdp: answer.sdp!, type: answer.type!);
   }
 
-  /// Set remote SDP description.
-  Future<void> setRemoteDescription(String sdp, String type) async {
-    await _pc!.setRemoteDescription(RTCSessionDescription(sdp, type));
+  @override
+  Future<void> setRemoteDescription(SessionDescription description) async {
+    await _pc!.setRemoteDescription(
+      RTCSessionDescription(description.sdp, description.type),
+    );
   }
 
-  /// Add a remote ICE candidate.
-  Future<void> addIceCandidate(
-      String candidate, String? sdpMid, int? sdpMLineIndex) async {
-    await _pc?.addCandidate(
-        RTCIceCandidate(candidate, sdpMid, sdpMLineIndex));
+  @override
+  Future<void> addIceCandidate(IceCandidateModel candidate) async {
+    await _pc?.addCandidate(RTCIceCandidate(
+      candidate.candidate,
+      candidate.sdpMid,
+      candidate.sdpMLineIndex,
+    ));
   }
 
-  /// Set callback for local ICE candidates.
-  set onIceCandidate(void Function(RTCIceCandidate candidate) callback) {
-    _pc!.onIceCandidate = callback;
+  // ── PeerConnectionService: audio control ──────────────────────────────────
+
+  @override
+  Future<void> setRemoteVolume(double volume) async {
+    _pendingVolume = volume;
+    final track = _remoteAudioTrack;
+    if (track != null) {
+      await Helper.setVolume(volume, track);
+    }
   }
 
-  /// Inspect the active ICE candidate pair to determine what relay was actually
-  /// used for this call. Returns one of:
-  ///   'direct'      — host-to-host, no server involved
-  ///   'stun'        — server-reflexive (STUN helped, no relay)
-  ///   'metered'     — relayed via Metered TURN (*.metered.live / openrelay)
-  ///   'expressturn' — relayed via ExpressTURN (*.expressturn.com)
-  ///   'turn'        — relayed via an unrecognised TURN server
-  ///   'unknown'     — stats not available or no active pair found
+  @override
+  Future<void> setMicEnabled(bool enabled) async {
+    _localStream?.getAudioTracks().forEach((t) => t.enabled = enabled);
+  }
+
+  @override
   Future<String> resolveActualTurnUsed() async {
     if (_pc == null) return 'unknown';
     try {
       final reports = await _pc!.getStats();
 
-      // Find the succeeded candidate-pair
       String? localCandidateId;
       for (final r in reports) {
         if (r.type == 'candidate-pair') {
           final state = r.values['state'] as String? ?? '';
           final nominated = r.values['nominated'] as bool? ?? false;
           if (state == 'succeeded' || nominated) {
-            localCandidateId =
-                r.values['localCandidateId'] as String?;
+            localCandidateId = r.values['localCandidateId'] as String?;
             break;
           }
         }
@@ -206,14 +274,12 @@ class WebRtcService {
 
       if (localCandidateId == null) return 'unknown';
 
-      // Look up the local candidate for that pair
       for (final r in reports) {
         if (r.type == 'local-candidate' && r.id == localCandidateId) {
           final candidateType = r.values['candidateType'] as String? ?? '';
           if (candidateType != 'relay') {
             return candidateType == 'host' ? 'direct' : 'stun';
           }
-          // It's a relay — figure out which TURN server
           final ip = (r.values['ip'] ??
                   r.values['address'] ??
                   r.values['relatedAddress'] ??
@@ -227,7 +293,7 @@ class WebRtcService {
           if (combined.contains('expressturn')) {
             return 'expressturn';
           }
-          return 'turn'; // relay via an unrecognised server
+          return 'turn';
         }
       }
     } catch (_) {
@@ -236,14 +302,32 @@ class WebRtcService {
     return 'unknown';
   }
 
-  /// Close peer connection and release media resources.
-  Future<void> close() async {
-    _statsTimer?.cancel();
-    _statsTimer = null;
-    _localStream?.getTracks().forEach((t) => t.stop());
-    _localStream?.dispose();
-    _localStream = null;
-    await _pc?.close();
-    _pc = null;
+  // ── Private ───────────────────────────────────────────────────────────────
+
+  void _startStatsPolling() {
+    _statsTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (_pc == null) return;
+      try {
+        final reports = await _pc!.getStats();
+        int bytesSent = 0;
+        int bytesReceived = 0;
+        for (final report in reports) {
+          final values = report.values;
+          if (report.type == 'outbound-rtp') {
+            bytesSent += (values['bytesSent'] as num?)?.toInt() ?? 0;
+          } else if (report.type == 'inbound-rtp') {
+            bytesReceived += (values['bytesReceived'] as num?)?.toInt() ?? 0;
+          }
+        }
+        if (!_statsController.isClosed) {
+          _statsController.add({
+            'bytesSent': bytesSent,
+            'bytesReceived': bytesReceived,
+          });
+        }
+      } catch (_) {
+        // getStats() failed transiently — skip this tick, keep timer running.
+      }
+    });
   }
 }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../services/call_log_service.dart';
+import '../di/service_locator.dart';
+import '../interfaces/call_log_repository.dart';
+import '../models/call_log_entry.dart';
 
 class CallLogsScreen extends StatefulWidget {
   const CallLogsScreen({super.key});
@@ -10,7 +12,7 @@ class CallLogsScreen extends StatefulWidget {
 }
 
 class _CallLogsScreenState extends State<CallLogsScreen> {
-  final _service = CallLogService();
+  final _service = sl<CallLogRepository>();
   List<CallLogEntry> _logs = [];
   bool _loading = true;
 
@@ -22,7 +24,12 @@ class _CallLogsScreenState extends State<CallLogsScreen> {
 
   Future<void> _loadLogs() async {
     final logs = await _service.loadLogs();
-    if (mounted) setState(() { _logs = logs; _loading = false; });
+    if (mounted) {
+      setState(() {
+        _logs = logs;
+        _loading = false;
+      });
+    }
   }
 
   Future<void> _confirmClear() async {
@@ -117,7 +124,7 @@ class _CallLogsScreenState extends State<CallLogsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Call Logs (last $kCallLogRetentionDays days)'),
+        title: const Text('Call Logs'),
         actions: [
           if (_logs.isNotEmpty)
             IconButton(

@@ -1,21 +1,34 @@
-import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 
-import 'screens/home_screen.dart';
-import 'screens/onboarding_screen.dart';
-import 'services/foreground_service.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart';
+
+import 'core/app_bootstrapper.dart';
+import 'screens/login_screen.dart';
+import 'screens/permission_screen.dart';
+import 'screens/startup_error_screen.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
-  initForegroundService();
+  // Keep the native splash visible while we initialise Firebase + DI.
+  final widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
+  FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  // Show onboarding only on first launch (no userId saved yet)
-  final prefs = await SharedPreferences.getInstance();
-  final hasUserId = prefs.getString('userId') != null;
-
-  runApp(MaterialApp(
-    home: hasUserId ? const HomeScreen() : const OnboardingScreen(),
-  ));
+  try {
+    final hasUserId = await AppBootstrapper.boot();
+    // All async init done — dismiss the splash before rendering the first frame.
+    FlutterNativeSplash.remove();
+    runZonedGuarded(
+      () => runApp(MaterialApp(
+        home: hasUserId ? const PermissionScreen() : const LoginScreen(),
+      )),
+      (error, stack) =>
+          FirebaseCrashlytics.instance.recordError(error, stack, fatal: true),
+    );
+  } catch (_) {
+    // Firebase init, DI setup, or foreground service init failed.
+    // Dismiss splash and show a recovery screen instead of a silent crash.
+    FlutterNativeSplash.remove();
+    runApp(const StartupErrorScreen());
+  }
 }

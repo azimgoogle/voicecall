@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Monochrome notification icon — ear + sound-waves glyph.
+  White paths on a transparent background.
+
+  Android 5+ (API 21+) tints this automatically:
+    • Status bar (collapsed)  → white on the system status-bar tint
+    • Notification card       → coloured circle badge using the app accent
+    • Android 13 themed icons → wallpaper-derived Material You tint
+
+  Using a VectorDrawable (rather than raster PNGs) guarantees the system
+  can apply its tint pass correctly on all OEM skins (MIUI, EMUI, etc.).
+
+  Viewport matches the SVG coordinate space used to design the icon (1024×1024).
+-->
+<vector
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+
+    <!--
+      Background circle — teal fill, same colour as the launcher icon background.
+      Visible in MIUI/OEM expanded notification cards (full-colour rendering).
+      In the status bar Android alpha-masks the whole drawable → solid white disc,
+      which is an acceptable monochrome notification indicator.
+    -->
+    <path
+        android:fillColor="#FF0D6D8C"
+        android:pathData="M 0,512 a 512,512 0 1,0 1024,0 a 512,512 0 1,0 -1024,0" />
+
+    <!--
+      Ear arc — 260° "C" shape opening to the right.
+      Start @ 50°:  (586.2, 735.5)
+      End   @ 310°: (586.2, 288.5)
+      large-arc=1, sweep=1 (clockwise in screen coords)
+    -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="73.7"
+        android:strokeLineCap="round"
+        android:pathData="M 586.2,735.5 A 179.2,291.84 0 1,1 586.2,288.5" />
+
+    <!--
+      Inner ear canal — filled circle, offset slightly below centre.
+      cx=471  cy=540  r=56.3
+    -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 471,540
+                          m -56.3,0
+                          a 56.3,56.3 0 1,0 112.6,0
+                          a 56.3,56.3 0 1,0 -112.6,0" />
+
+    <!--
+      Bridge — narrow vertical ellipse linking canal to ear stroke.
+      cx=481  cy=547  rx=26.5  ry=58.4
+    -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 481,547
+                          m -26.5,0
+                          a 26.5,58.4 0 1,0 53,0
+                          a 26.5,58.4 0 1,0 -53,0" />
+
+    <!--
+      Sound-wave arc 1 — closest, full opacity.
+      Centre (553,512)  rx=138.24  ry=179.2
+      Start @ -55°: (632.3, 365.2)  End @ +55°: (632.3, 658.8)
+      large-arc=0, sweep=1
+    -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="53.25"
+        android:strokeLineCap="round"
+        android:pathData="M 632.3,365.2 A 138.24,179.2 0 0,1 632.3,658.8" />
+
+    <!--
+      Sound-wave arc 2 — medium.
+      rx=230.4  ry=297.16
+      Start: (685.1, 268.5)  End: (685.1, 755.5)
+    -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="45.06"
+        android:strokeLineCap="round"
+        android:pathData="M 685.1,268.5 A 230.4,297.16 0 0,1 685.1,755.5" />
+
+    <!--
+      Sound-wave arc 3 — outermost.
+      rx=322.56  ry=414.72
+      Start: (738.0, 172.1)  End: (738.0, 851.9)
+    -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="36.86"
+        android:strokeLineCap="round"
+        android:pathData="M 738.0,172.1 A 322.56,414.72 0 0,1 738.0,851.9" />
+
+</vector>

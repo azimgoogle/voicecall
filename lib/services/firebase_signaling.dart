@@ -1,42 +1,77 @@
 import 'dart:async';
-import 'dart:ui' show VoidCallback;
-import 'package:firebase_database/firebase_database.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
 
-class FirebaseSignaling {
+import 'package:firebase_database/firebase_database.dart';
+
+import '../interfaces/signaling_service.dart';
+import '../models/ice_candidate_model.dart';
+import '../models/session_description.dart';
+
+/// Firebase Realtime Database implementation of [SignalingService].
+///
+/// All WebRTC-specific types are gone — this class only knows about
+/// [SessionDescription] and [IceCandidateModel] from the domain layer,
+/// so it can be swapped for a WebSocket or HTTP implementation without
+/// touching any other file.
+class FirebaseSignaling implements SignalingService {
   final DatabaseReference _db = FirebaseDatabase.instance.ref();
+
+  /// Firebase subscriptions for call-scoped streams.
+  /// Cancelled by [cancelListeners] at call teardown.
   final List<StreamSubscription> _subs = [];
 
-  /// Generate a call ID from caller, callee, and current timestamp.
-  String generateCallId(String callerId, String calleeId) {
-    return '${callerId}_${calleeId}_${DateTime.now().millisecondsSinceEpoch}';
-  }
+  /// StreamControllers backing call-scoped streams.
+  /// Closed by [cancelListeners] so subscribers receive a done event.
+  final List<StreamController<dynamic>> _callControllers = [];
 
-  /// Write offer + metadata to /calls/{callId}/
+  // ── Call ID ───────────────────────────────────────────────────────────────
+
+  @override
+  String generateCallId(String callerId, String calleeId) =>
+      '${callerId}_${calleeId}_${DateTime.now().millisecondsSinceEpoch}';
+
+  // ── Offer / Answer ────────────────────────────────────────────────────────
+
+  @override
   Future<void> writeOffer({
     required String callId,
-    required RTCSessionDescription offer,
+    required SessionDescription offer,
     required String caller,
     required String callee,
+    required String callerHandle,
   }) async {
     await _db.child('calls/$callId').set({
       'offer': {'sdp': offer.sdp, 'type': offer.type},
-      'status': 'waiting',
       'caller': caller,
       'callee': callee,
+      'callerHandle': callerHandle,
     });
   }
 
-  /// Read offer from /calls/{callId}/offer
-  Future<Map<String, dynamic>> readOffer(String callId) async {
-    final snap = await _db.child('calls/$callId/offer').get();
-    return Map<String, dynamic>.from(snap.value as Map);
+  @override
+  Future<String?> readCallerHandle(String callId) async {
+    final snap = await _db.child('calls/$callId/callerHandle').get();
+    return snap.exists ? snap.value as String? : null;
   }
 
-  /// Write answer to /calls/{callId}/answer
+  @override
+  Future<SessionDescription> readOffer(String callId) async {
+    final snap = await _db.child('calls/$callId/offer').get();
+    final raw = snap.value;
+    if (raw is! Map) {
+      throw StateError('readOffer: unexpected data at calls/$callId/offer — '
+          'expected Map, got ${raw.runtimeType}');
+    }
+    final data = Map<String, dynamic>.from(raw);
+    return SessionDescription(
+      sdp: data['sdp'] as String,
+      type: data['type'] as String,
+    );
+  }
+
+  @override
   Future<void> writeAnswer({
     required String callId,
-    required RTCSessionDescription answer,
+    required SessionDescription answer,
   }) async {
     await _db.child('calls/$callId/answer').set({
       'sdp': answer.sdp,
@@ -44,12 +79,13 @@ class FirebaseSignaling {
     });
   }
 
-  /// Push an ICE candidate under offerCandidates or answerCandidates.
-  /// [isCaller] determines which node to write to.
+  // ── ICE candidates ────────────────────────────────────────────────────────
+
+  @override
   Future<void> writeIceCandidate({
     required String callId,
     required bool isCaller,
-    required RTCIceCandidate candidate,
+    required IceCandidateModel candidate,
   }) async {
     final node = isCaller ? 'offerCandidates' : 'answerCandidates';
     await _db.child('calls/$callId/$node').push().set({
@@ -59,81 +95,133 @@ class FirebaseSignaling {
     });
   }
 
-  /// Notify remote user of incoming call.
+  @override
+  Stream<IceCandidateModel> iceCandidates(String callId, bool fromCaller) {
+    final node = fromCaller ? 'offerCandidates' : 'answerCandidates';
+    final ctrl = StreamController<IceCandidateModel>.broadcast();
+    _callControllers.add(ctrl);
+    _subs.add(
+      _db.child('calls/$callId/$node').onChildAdded.listen((event) {
+        if (ctrl.isClosed) return;
+        final raw = event.snapshot.value;
+        if (raw is! Map) return; // unexpected data shape — skip silently
+        final data = Map<String, dynamic>.from(raw);
+        ctrl.add(IceCandidateModel(
+          candidate: data['candidate'] as String,
+          sdpMid: data['sdpMid'] as String?,
+          sdpMLineIndex: data['sdpMLineIndex'] as int?,
+        ));
+      }),
+    );
+    return ctrl.stream;
+  }
+
+  // ── Call lifecycle ────────────────────────────────────────────────────────
+
+  @override
   Future<void> notifyRemoteUser(String remoteUserId, String callId) async {
     await _db.child('users/$remoteUserId/incomingCall').set(callId);
   }
 
-  /// Set call status (waiting / active / ended).
-  Future<void> setStatus(String callId, String status) async {
-    await _db.child('calls/$callId/status').set(status);
+  @override
+  Stream<SessionDescription> answerStream(String callId) {
+    final ctrl = StreamController<SessionDescription>.broadcast();
+    _callControllers.add(ctrl);
+    _subs.add(
+      _db.child('calls/$callId/answer').onValue.listen((event) {
+        if (ctrl.isClosed) return;
+        final data = event.snapshot.value;
+        if (data == null) return;
+        if (data is! Map) return; // unexpected data shape — skip silently
+        final map = Map<String, dynamic>.from(data);
+        ctrl.add(SessionDescription(
+          sdp: map['sdp'] as String,
+          type: map['type'] as String,
+        ));
+      }),
+    );
+    return ctrl.stream;
   }
 
-  /// Listen for answer on /calls/{callId}/answer.
-  void listenForAnswer(
-      String callId, void Function(Map<String, dynamic> answer) callback) {
-    _subs.add(_db.child('calls/$callId/answer').onValue.listen((event) {
-      final data = event.snapshot.value;
-      if (data != null) {
-        callback(Map<String, dynamic>.from(data as Map));
-      }
-    }));
+  @override
+  Future<void> writeCancelledSignal(String callId) async {
+    await _db.child('calls/$callId/cancelled').set(true);
   }
 
-  /// Listen for remote ICE candidates.
-  /// [fromCaller] true = listen to offerCandidates, false = answerCandidates.
-  void listenForIceCandidates(
-      String callId,
-      bool fromCaller,
-      void Function(Map<String, dynamic> candidate) callback) {
-    final node = fromCaller ? 'offerCandidates' : 'answerCandidates';
-    _subs.add(_db.child('calls/$callId/$node').onChildAdded.listen((event) {
-      callback(Map<String, dynamic>.from(event.snapshot.value as Map));
-    }));
+  @override
+  Stream<void> callCancelled(String callId) {
+    // Not call-scoped via _subs: the ViewModel manages this subscription
+    // directly (cancelled on accept or dismiss, like the old StreamSubscription).
+    return _db
+        .child('calls/$callId/cancelled')
+        .onValue
+        .where((event) => event.snapshot.value == true)
+        .map((_) => null);
   }
 
-  /// Listen for call status becoming [targetStatus].
-  void listenForStatus(
-      String callId, String targetStatus, VoidCallback callback) {
-    _subs.add(_db.child('calls/$callId/status').onValue.listen((event) {
-      if (event.snapshot.value == targetStatus) {
-        callback();
-      }
-    }));
-  }
-
-  /// Check if a userId already exists in the database (ever been registered).
-  /// Returns true if the node at /users/{userId} exists, false otherwise.
-  Future<bool> isUserIdTaken(String userId) async {
-    final snap = await _db.child('users/$userId').get();
-    return snap.exists;
-  }
-
-  /// Set user online with auto-disconnect.
-  Future<void> setUserOnline(String userId) async {
-    final ref = _db.child('users/$userId');
-    await ref.child('online').set(true);
-    ref.child('online').onDisconnect().set(false);
-  }
-
-  /// Listen for incoming calls on /users/{userId}/incomingCall.
-  StreamSubscription listenForIncomingCall(
-      String userId, void Function(String callId) callback) {
+  @override
+  Stream<String> incomingCall(String userId) {
+    // Not call-scoped via _subs: the ViewModel holds this subscription for
+    // its entire lifetime (mirrors the old listenForIncomingCall behaviour).
     final ref = _db.child('users/$userId/incomingCall');
-    return ref.onValue.listen((event) async {
-      final callId = event.snapshot.value as String?;
-      if (callId != null) {
-        await ref.remove();
-        callback(callId);
-      }
+    return ref.onValue
+        .where((event) => event.snapshot.value is String)
+        .asyncMap((event) async {
+      final callId = event.snapshot.value as String;
+      await ref.remove();
+      return callId;
     });
   }
 
-  /// Cancel all active Firebase listeners.
+  // ── Busy signal ───────────────────────────────────────────────────────────
+
+  @override
+  Future<void> writeBusySignal(String callerId) async {
+    await _db.child('users/$callerId/busySignal').set(true);
+  }
+
+  @override
+  Stream<void> busySignal(String userId) {
+    final ctrl = StreamController<void>.broadcast();
+    _callControllers.add(ctrl);
+    _subs.add(
+      _db.child('users/$userId/busySignal').onValue.listen((event) async {
+        if (event.snapshot.value != null) {
+          await _db.child('users/$userId/busySignal').remove();
+          if (!ctrl.isClosed) ctrl.add(null);
+        }
+      }),
+    );
+    return ctrl.stream;
+  }
+
+  // ── Identity ──────────────────────────────────────────────────────────────
+
+  @override
+  Future<String?> lookupUidByHandle(String handle) async {
+    final encoded = handle.replaceAll('.', ',');
+    final snap = await _db.child('emailToUid/$encoded').get();
+    return snap.exists ? snap.value as String? : null;
+  }
+
+  @override
+  Future<String?> lookupHandleByUid(String uid) async {
+    final snap = await _db.child('userProfiles/$uid/email').get();
+    return snap.exists ? snap.value as String? : null;
+  }
+
+  // ── Cleanup ───────────────────────────────────────────────────────────────
+
+  @override
   Future<void> cancelListeners() async {
     for (final sub in _subs) {
       await sub.cancel();
     }
     _subs.clear();
+
+    for (final ctrl in _callControllers) {
+      await ctrl.close();
+    }
+    _callControllers.clear();
   }
 }

@@ -43,3 +43,17 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Release signing — never commit
+android/key.properties
+*.jks
+*.keystore
+
+# Firebase config — never commit; add per-flavor files manually
+android/app/google-services.json
+android/app/src/dev/google-services.json
+android/app/src/prod/google-services.json
+/wireframes.html
+
+# Store assets (screenshots, banners, graphics for Play Store listing)
+/stores/

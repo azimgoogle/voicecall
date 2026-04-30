@@ -1,15 +1,22 @@
 import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../services/audio_service.dart';
-import '../services/call_log_service.dart';
-import '../services/firebase_signaling.dart';
-import '../services/foreground_service.dart';
-import '../services/webrtc_service.dart';
+import '../core/uid_utils.dart';
+import '../di/service_locator.dart';
+import '../interfaces/auth_repository.dart';
+import '../interfaces/call_log_repository.dart';
+import '../interfaces/remote_config_repository.dart';
+import '../models/call_log_entry.dart';
+import '../models/call_state.dart';
+import '../viewmodels/home_view_model.dart';
 import 'call_logs_screen.dart';
 import 'call_screen.dart';
+import 'login_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,314 +25,706 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String _myUserId = '';
+  late final HomeViewModel _viewModel;
   final _remoteIdController = TextEditingController();
-  final _firebase = FirebaseSignaling();
-  final _webrtc = WebRtcService();
-  final _logService = CallLogService();
-  StreamSubscription? _incomingCallSub;
-  StreamSubscription? _statsSub;
-  bool _inCall = false;
-  bool _isCallerRole = false;
-  String? _currentCallId;
+  final _callScreenKey = GlobalKey<CallScreenState>();
+  final _logRepository = sl<CallLogRepository>();
+  final _remoteConfig = sl<RemoteConfigRepository>();
+  final _inputFocusNode = FocusNode();
+
+  String _myUserHandle = '';
   String _selectedTurnServer = 'both';
+  bool _micPermissionDenied = false;
+  bool _turnSelectorEnabled = false;
+  List<CallLogEntry> _recentContacts = [];
+  bool _isCalling = false;
+  bool _isAnswering = false;
 
-  static const String _lastRemoteIdKey = 'last_remote_id';
-
-  // Call log tracking
-  CallLogEntry? _currentLogEntry;
+  late StreamSubscription<HomeEvent> _eventsSub;
+  late StreamSubscription<CallState> _stateSub;
 
   @override
   void initState() {
     super.initState();
-    _init();
+    _viewModel = sl<HomeViewModel>();
+    _remoteIdController.addListener(() => setState(() {}));
+    _initAsync();
   }
 
-  Future<void> _init() async {
-    await Permission.microphone.request();
-
-    // userId is guaranteed to exist — set by OnboardingScreen on first launch
-    final prefs = await SharedPreferences.getInstance();
-    final userId = prefs.getString('userId')!;
-    final lastRemoteId = prefs.getString(_lastRemoteIdKey) ?? '';
-    setState(() {
-      _myUserId = userId;
-      _remoteIdController.text = lastRemoteId;
-    });
-
-    await _firebase.setUserOnline(_myUserId);
-    _listenForIncomingCalls();
-    await startForegroundService();
-  }
-
-  void _listenForIncomingCalls() {
-    _incomingCallSub = _firebase.listenForIncomingCall(
-      _myUserId,
-      (callId) async {
-        if (_inCall) return;
-        _inCall = true;
-        _isCallerRole = false;
-        _currentCallId = callId;
-        await _answerCall(callId);
-        if (mounted) setState(() {});
-      },
-    );
-  }
-
-  /// Start tracking stats into the current log entry (caller only).
-  void _startStatsTracking() {
-    _statsSub = _webrtc.statsStream.listen((stats) {
-      if (_currentLogEntry == null) return;
-      _currentLogEntry = _currentLogEntry!.copyWith(
-        bytesSent: stats['bytesSent'] as int? ?? 0,
-        bytesReceived: stats['bytesReceived'] as int? ?? 0,
-      );
-    });
-  }
-
-  /// Finalise and persist the current log entry.
-  Future<void> _finaliseLog() async {
-    if (_currentLogEntry == null) return;
-    final turnUsed = await _webrtc.resolveActualTurnUsed();
-    final finalEntry = _currentLogEntry!.copyWith(
-      endedAt: DateTime.now(),
-      turnUsed: turnUsed,
-    );
-    await _logService.saveEntry(finalEntry);
-    _currentLogEntry = null;
-    _statsSub?.cancel();
-    _statsSub = null;
-  }
-
-  /// Caller: create offer → Firebase → listen for answer + ICE
-  Future<void> _makeCall() async {
-    final remoteId = _remoteIdController.text.trim();
-    if (remoteId.isEmpty) return;
-
-    // Persist so it auto-populates next time
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lastRemoteIdKey, remoteId);
-
-    _inCall = true;
-    _isCallerRole = true;
-    setState(() {});
-
-    await _webrtc.init(isCaller: true, turnServer: _selectedTurnServer);
-    await AudioService.startAudioSession();
-    await AudioService.acquireProximityWakeLock();
-    final callId = _firebase.generateCallId(_myUserId, remoteId);
-    _currentCallId = callId;
-
-    // Start a log entry for this outgoing call
-    _currentLogEntry = CallLogEntry(
-      callId: callId,
-      role: 'caller',
-      remoteUserId: remoteId,
-      turnServer: _selectedTurnServer,
-      startedAt: DateTime.now(),
-    );
-    await _logService.saveEntry(_currentLogEntry!);
-    _startStatsTracking();
-
-    // Send local ICE candidates to Firebase
-    _webrtc.onIceCandidate = (candidate) {
-      _firebase.writeIceCandidate(
-          callId: callId, isCaller: true, candidate: candidate);
-    };
-
-    // Create and write offer
-    final offer = await _webrtc.createOffer();
-    await _firebase.writeOffer(
-      callId: callId,
-      offer: offer,
-      caller: _myUserId,
-      callee: remoteId,
-    );
-    await _firebase.notifyRemoteUser(remoteId, callId);
-    await updateForegroundNotification('In call...');
-
-    // Listen for answer
-    _firebase.listenForAnswer(callId, (answerData) {
-      _webrtc.setRemoteDescription(answerData['sdp'], answerData['type']);
-    });
-
-    // Listen for remote ICE candidates (from callee)
-    _firebase.listenForIceCandidates(callId, false, (data) {
-      _webrtc.addIceCandidate(
-          data['candidate'], data['sdpMid'], data['sdpMLineIndex']);
-    });
-
-    // Listen for call ended
-    _firebase.listenForStatus(callId, 'ended', _onCallEnded);
-  }
-
-  /// Callee: read offer → create answer → exchange ICE
-  Future<void> _answerCall(String callId) async {
-    await _webrtc.init(isCaller: false);
-
-    // Derive remote user ID from callId format: {callerId}_{calleeId}_{ts}
-    final parts = callId.split('_');
-    final remoteUserId = parts.length >= 2 ? parts[0] : callId;
-
-    // Start a log entry for this incoming call (callee — no TURN selection)
-    _currentLogEntry = CallLogEntry(
-      callId: callId,
-      role: 'callee',
-      remoteUserId: remoteUserId,
-      turnServer: 'both',
-      startedAt: DateTime.now(),
-    );
-    await _logService.saveEntry(_currentLogEntry!);
-
-    // Send local ICE candidates to Firebase
-    _webrtc.onIceCandidate = (candidate) {
-      _firebase.writeIceCandidate(
-          callId: callId, isCaller: false, candidate: candidate);
-    };
-
-    // Read offer and set remote description
-    final offerData = await _firebase.readOffer(callId);
-    await _webrtc.setRemoteDescription(offerData['sdp'], offerData['type']);
-
-    // Create and write answer
-    final answer = await _webrtc.createAnswer();
-    await _firebase.writeAnswer(callId: callId, answer: answer);
-    await _firebase.setStatus(callId, 'active');
-    await updateForegroundNotification('In call...');
-
-    // Listen for remote ICE candidates (from caller)
-    _firebase.listenForIceCandidates(callId, true, (data) {
-      _webrtc.addIceCandidate(
-          data['candidate'], data['sdpMid'], data['sdpMLineIndex']);
-    });
-
-    // Listen for call ended
-    _firebase.listenForStatus(callId, 'ended', _onCallEnded);
-  }
-
-  void _onCallEnded() async {
-    await _finaliseLog();
-    // Local cleanup only — no Firebase status write.
-    // Caller already wrote "ended"; callee just cleans up.
-    await _firebase.cancelListeners();
-    await _webrtc.close();
-    if (_isCallerRole) {
-      await AudioService.releaseProximityWakeLock();
-      await AudioService.stopAudioSession();
+  Future<void> _initAsync() async {
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null) {
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+        );
+      }
+      return;
     }
-    _inCall = false;
-    _isCallerRole = false;
-    _currentCallId = null;
-    await updateForegroundNotification('Waiting for calls...');
-    if (mounted) setState(() {});
+    final userId = firebaseUser.uid;
+    final userHandle = firebaseUser.email ?? shortUidHash(firebaseUser.uid);
+
+    final lastRemoteId = await _viewModel.loadLastRemoteId();
+
+    if (mounted) {
+      setState(() {
+        _myUserHandle = userHandle;
+        _remoteIdController.text = lastRemoteId;
+      });
+    }
+
+    // Load most recent log entry per unique remote user (newest first, max 5).
+    final logs = await _logRepository.loadLogs();
+    final seen = <String>{};
+    final recent = <CallLogEntry>[];
+    for (final log in logs.reversed) {
+      if (seen.add(log.remoteUserId) && recent.length < 5) {
+        recent.add(log);
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _recentContacts = recent;
+        _turnSelectorEnabled = _remoteConfig.isTurnSelectorEnabled();
+      });
+    }
+
+    await _viewModel.init(userId, userHandle,
+        isAnonymous: firebaseUser.isAnonymous);
+    FlutterForegroundTask.addTaskDataCallback(_onForegroundData);
+    _eventsSub = _viewModel.events.listen(_onEvent);
+    _stateSub = _viewModel.stateStream.listen((state) {
+      if (state is Idle && mounted) {
+        setState(() { _isCalling = false; _isAnswering = false; });
+      }
+    });
+
+    final micStatus = await Permission.microphone.status;
+    if (mounted && !micStatus.isGranted) {
+      setState(() => _micPermissionDenied = true);
+    }
+
+    // Request focus after all setState calls have settled so that no subsequent
+    // rebuild dismisses the keyboard again.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _inputFocusNode.requestFocus();
+    });
   }
 
-  Future<void> _endCall() async {
-    await _finaliseLog();
-    if (_currentCallId != null) {
-      await _firebase.setStatus(_currentCallId!, 'ended');
+  /// Receives action IDs forwarded from the foreground notification buttons.
+  void _onForegroundData(Object data) {
+    if (data == 'end_call') {
+      _viewModel.endCall();
+    } else if (data == 'mute') {
+      _viewModel.applyMute(true);
+      _callScreenKey.currentState?.setMuted(true);
+    } else if (data == 'unmute') {
+      _viewModel.applyMute(false);
+      _callScreenKey.currentState?.setMuted(false);
     }
-    await _firebase.cancelListeners();
-    await _webrtc.close();
-    await AudioService.releaseProximityWakeLock();
-    await AudioService.stopAudioSession();
-    _inCall = false;
-    _isCallerRole = false;
-    _currentCallId = null;
-    await updateForegroundNotification('Waiting for calls...');
-    if (mounted) setState(() {});
+  }
+
+  /// Handles one-shot events that require Scaffold context.
+  void _onEvent(HomeEvent event) {
+    switch (event) {
+      case HomeEvent.remoteDisconnected:
+        _callScreenKey.currentState?.notifyRemoteDisconnected();
+        if (_callScreenKey.currentState == null) {
+          _viewModel.endCall();
+        }
+
+      case HomeEvent.calleeBusy:
+        if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('${_remoteIdController.text.trim()} is busy.'),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 3),
+          ));
+        }
+
+      case HomeEvent.callTimeout:
+        if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No answer. Call ended.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ));
+        }
+
+      case HomeEvent.callSetupFailed:
+        if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Call failed to connect. Please try again.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ));
+        }
+
+      case HomeEvent.calleeNotFound:
+        if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+              '"${_remoteIdController.text.trim()}" is not registered. '
+              'Check the handle and try again.',
+            ),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 4),
+          ));
+        }
+
+      case HomeEvent.microphonePermissionDenied:
+        if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+              'Microphone permission is required. '
+              'Please enable it in Settings.',
+            ),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ));
+        }
+
+      case HomeEvent.weeklyLimitReached:
+        if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Weekly call limit reached. Resets on Monday.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ));
+        }
+
+      case HomeEvent.anonLimitReached:
+        if (mounted) {
+          setState(() { _isCalling = false; _isAnswering = false; });
+          _showAnonUpsellDialog();
+        }
+    }
+  }
+
+  void _showAnonUpsellDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.card_giftcard, size: 40, color: Colors.orange),
+        title: const Text('Guest Minutes Used Up'),
+        content: const Text(
+          'You have used all 100 free guest minutes.\n\n'
+          'Create a free account and get 100 extra minutes as a welcome bonus.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Later'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+              );
+            },
+            child: const Text('Create Account'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   void dispose() {
-    _incomingCallSub?.cancel();
-    _statsSub?.cancel();
-    if (_isCallerRole && _currentCallId != null) {
-      _firebase.setStatus(_currentCallId!, 'ended');
-    }
-    _firebase.cancelListeners();
-    _webrtc.close();
+    _eventsSub.cancel();
+    _stateSub.cancel();
+    _remoteIdController.dispose();
+    _inputFocusNode.dispose();
+    FlutterForegroundTask.removeTaskDataCallback(_onForegroundData);
+    _viewModel.dispose();
     super.dispose();
   }
 
+  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    if (_inCall) {
-      return CallScreen(
-        isCaller: _isCallerRole,
-        onEndCall: _endCall,
-        statsStream: _webrtc.statsStream,
-      );
-    }
+    return StreamBuilder<CallState>(
+      stream: _viewModel.stateStream,
+      initialData: _viewModel.state,
+      builder: (context, snapshot) {
+        final state = snapshot.data ?? const Idle();
+        return switch (state) {
+          ActiveCall() => _buildActiveCall(state),
+          IncomingCall() => _buildIncomingCall(state),
+          Idle() => _buildIdle(),
+        };
+      },
+    );
+  }
 
+  Widget _buildActiveCall(ActiveCall state) {
+    return CallScreen(
+      key: _callScreenKey,
+      isCaller: state.isCaller,
+      onEndCall: _viewModel.endCall,
+      statsStream: _viewModel.statsStream,
+      initialVolume: state.volume,
+      initialMuted: state.muted,
+      callStartedAt: state.startedAt,
+      onRemoteDisconnected: state.isCaller ? _viewModel.endCall : null,
+      onVolumeChanged: _viewModel.setVolume,
+      onMuteToggled: _viewModel.applyMute,
+    );
+  }
+
+  Widget _buildIncomingCall(IncomingCall state) {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.phone_in_talk, size: 80, color: Colors.green),
+            const SizedBox(height: 24),
+            const Text('Incoming call from',
+                style: TextStyle(fontSize: 16, color: Colors.grey)),
+            const SizedBox(height: 8),
+            Text(
+              state.callerId,
+              style: const TextStyle(
+                  fontSize: 28, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 48),
+            ElevatedButton(
+              onPressed: _isAnswering
+                  ? null
+                  : () {
+                      setState(() => _isAnswering = true);
+                      _viewModel.acceptIncomingCall(state.callId);
+                    },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 48, vertical: 16),
+              ),
+              child: _isAnswering
+                  ? const SizedBox(
+                      height: 22, width: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5, color: Colors.white,
+                      ),
+                    )
+                  : const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.phone),
+                        SizedBox(width: 8),
+                        Text('Answer', style: TextStyle(fontSize: 18)),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _requestMicPermission() async {
+    final status = await Permission.microphone.request();
+    if (!mounted) return;
+    if (status.isGranted) {
+      setState(() => _micPermissionDenied = false);
+    } else if (status.isPermanentlyDenied) {
+      await openAppSettings();
+    }
+  }
+
+  void _makeCallTo(String remoteId) {
+    if (remoteId.isEmpty) return;
+    _remoteIdController.text = remoteId;
+    setState(() => _isCalling = true);
+    _viewModel.makeCall(remoteId, _selectedTurnServer);
+  }
+
+  // ── Idle screen ────────────────────────────────────────────────────────────
+
+  Widget _buildIdle() {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Voice Call POC'),
+        title: const Text('Nest Call'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Call Logs',
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(
-                  builder: (_) => const CallLogsScreen()),
+              MaterialPageRoute(builder: (_) => const CallLogsScreen()),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Sign Out',
+            onPressed: () async {
+              await sl<AuthRepository>().signOut();
+              if (!mounted) return;
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                (_) => false,
+              );
+            },
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          if (_micPermissionDenied) _buildMicPermissionBanner(),
+
+          // Scrollable content — recent list can grow to 5 items.
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _myUserHandle,
+                    style: const TextStyle(fontSize: 18),
+                  ),
+                  const SizedBox(height: 32),
+                  TextField(
+                    controller: _remoteIdController,
+                    focusNode: _inputFocusNode,
+                    textInputAction: TextInputAction.go,
+                    onSubmitted: (value) => _makeCallTo(value.trim()),
+                    decoration: const InputDecoration(
+                      labelText: 'Enter handle to call',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: (!_isCalling && _remoteIdController.text.trim().isNotEmpty)
+                          ? () => _makeCallTo(_remoteIdController.text.trim())
+                          : null,
+                      child: _isCalling
+                          ? const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  height: 16, width: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                SizedBox(width: 10),
+                                Text('Calling...'),
+                              ],
+                            )
+                          : const Text('Call'),
+                    ),
+                  ),
+                  if (_recentContacts.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    const Text(
+                      'RECENT',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    ..._recentContacts.map(_buildRecentContactTile),
+                  ],
+                  if (_turnSelectorEnabled) ...[
+                    const SizedBox(height: 24),
+                    const Text('TURN Server',
+                        style: TextStyle(fontSize: 14, color: Colors.grey)),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(
+                          value: 'metered',
+                          label: Text('Metered'),
+                          icon: Icon(Icons.cloud),
+                        ),
+                        ButtonSegment(
+                          value: 'both',
+                          label: Text('Both'),
+                          icon: Icon(Icons.merge_type),
+                        ),
+                        ButtonSegment(
+                          value: 'expressturn',
+                          label: Text('ExpressTURN'),
+                          icon: Icon(Icons.swap_horiz),
+                        ),
+                      ],
+                      selected: {_selectedTurnServer},
+                      onSelectionChanged: (selection) {
+                        setState(() => _selectedTurnServer = selection.first);
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 48),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 400),
+                    child: _recentContacts.length < 3
+                        ? const ConnectedIllustration(
+                            key: ValueKey('illustration'))
+                        : const SizedBox.shrink(),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
             ),
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    );
+  }
+
+  // ── Recent contact tile ───────────────────────────────────────────────────
+
+  Widget _buildRecentContactTile(CallLogEntry entry) {
+    final isOutgoing = entry.isCaller;
+    return InkWell(
+      onTap: () => _makeCallTo(entry.remoteUserId),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
           children: [
-            Text('My ID: $_myUserId',
-                style: const TextStyle(fontSize: 18)),
-            const SizedBox(height: 32),
-            TextField(
-              controller: _remoteIdController,
-              decoration: const InputDecoration(
-                labelText: 'Remote User ID',
-                border: OutlineInputBorder(),
+            CircleAvatar(
+              backgroundColor: Colors.deepPurple.shade100,
+              child: Text(
+                entry.remoteUserId[0].toUpperCase(),
+                style: TextStyle(
+                  color: Colors.deepPurple.shade700,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-            const SizedBox(height: 24),
-            const Text('TURN Server',
-                style: TextStyle(fontSize: 14, color: Colors.grey)),
-            const SizedBox(height: 8),
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                  value: 'metered',
-                  label: Text('Metered'),
-                  icon: Icon(Icons.cloud),
-                ),
-                ButtonSegment(
-                  value: 'both',
-                  label: Text('Both'),
-                  icon: Icon(Icons.merge_type),
-                ),
-                ButtonSegment(
-                  value: 'expressturn',
-                  label: Text('ExpressTURN'),
-                  icon: Icon(Icons.swap_horiz),
-                ),
-              ],
-              selected: {_selectedTurnServer},
-              onSelectionChanged: (selection) {
-                setState(() => _selectedTurnServer = selection.first);
-              },
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _makeCall,
-                child: const Text('Call'),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.remoteUserId,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_formatCallDate(entry.startedAt)} · ${_formatDuration(entry.duration)}',
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                  ),
+                ],
               ),
             ),
+            const SizedBox(width: 8),
+            _buildDirectionBadge(isOutgoing),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildDirectionBadge(bool isOutgoing) {
+    final color = isOutgoing ? Colors.green : Colors.blue;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.shade300),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isOutgoing ? Icons.call_made : Icons.call_received,
+            size: 14,
+            color: color.shade700,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            isOutgoing ? 'Outgoing' : 'Incoming',
+            style: TextStyle(
+              fontSize: 12,
+              color: color.shade700,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Formatting helpers ────────────────────────────────────────────────────
+
+  String _formatCallDate(DateTime dt) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final date = DateTime(dt.year, dt.month, dt.day);
+
+    if (date == today) return 'Today';
+    if (date == yesterday) return 'Yesterday';
+
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${weekdays[dt.weekday - 1]}, ${dt.day} ${months[dt.month - 1]}';
+  }
+
+  String _formatDuration(Duration d) {
+    final m = d.inMinutes;
+    final s = d.inSeconds.remainder(60);
+    return '$m min ${s.toString().padLeft(2, '0')} sec';
+  }
+
+  // ── Mic permission banner ─────────────────────────────────────────────────
+
+  Widget _buildMicPermissionBanner() {
+    return MaterialBanner(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      leading: const Icon(Icons.mic_off, color: Colors.white),
+      backgroundColor: Colors.red.shade700,
+      content: const Text(
+        'Microphone access is required to make and receive calls.',
+        style: TextStyle(color: Colors.white),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _requestMicPermission,
+          child: const Text('Grant', style: TextStyle(color: Colors.white)),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Connected illustration ────────────────────────────────────────────────────
+
+/// Decorative illustration shown on the idle home screen when the recent-calls
+/// list has fewer than 3 entries. Exported only for widget tests.
+@visibleForTesting
+class ConnectedIllustration extends StatelessWidget {
+  const ConnectedIllustration({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Avatar row is not padded horizontally — it needs the full width.
+        // FittedBox scales it down on narrow screens so nothing clips.
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: _buildAvatarRow(),
+        ),
+        const SizedBox(height: 20),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 32),
+          child: Text(
+            'Always connected',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF674FA3),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 32),
+          child: Text(
+            'Enter a handle above to call your family',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 15,
+              color: Color(0xFF8A7890),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAvatarRow() {
+    const avatarWidget = CircleAvatar(
+      radius: 44,
+      backgroundColor: Color(0xFFD0C4E8),
+      child: Icon(Icons.person, color: Color(0xFF503198), size: 44),
+    );
+
+    final dotsAndHeart = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (int i = 0; i < 5; i++) ...[
+          if (i > 0) const SizedBox(width: 10),
+          if (i == 2)
+            const Icon(Icons.favorite, color: Color(0xFF674FA3), size: 28)
+          else
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD0C4E8),
+                borderRadius: BorderRadius.circular(5),
+              ),
+            ),
+        ],
+      ],
+    );
+
+    // The pill glow is sized to snugly contain both avatars (row is ~332 px wide).
+    // FittedBox in the parent handles any screen narrower than that.
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Container(
+          width: 360,
+          height: 160,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(80),
+            color: const Color(0xFFEDE5FC).withValues(alpha: 0.5),
+          ),
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            avatarWidget,
+            const SizedBox(width: 24),
+            dotsAndHeart,
+            const SizedBox(width: 24),
+            avatarWidget,
+          ],
+        ),
+      ],
     );
   }
 }
