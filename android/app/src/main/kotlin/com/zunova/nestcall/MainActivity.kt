@@ -1,5 +1,7 @@
 package com.zunova.nestcall
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -12,6 +14,8 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -56,6 +60,19 @@ class MainActivity : FlutterActivity() {
             }
         }
         override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "default_channel",
+                "General Notifications",
+                NotificationManager.IMPORTANCE_HIGH,
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

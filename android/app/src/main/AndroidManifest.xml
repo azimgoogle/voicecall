@@ -44,6 +44,11 @@
                 android:name="ic_notification"
                 android:resource="@drawable/ic_notification" />
         </service>
+        <!-- FCM will put incoming notifications into this channel by default.
+             The channel itself is created in MainActivity.onCreate(). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="default_channel" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
@@ -27,6 +28,14 @@ abstract final class AppBootstrapper {
   static Future<bool> boot() async {
     WidgetsFlutterBinding.ensureInitialized();
     await Firebase.initializeApp();
+
+    // On iOS/macOS, show notification banner + play sound when app is in
+    // foreground. On Android, the onMessage stream handles foreground delivery.
+    await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
 
     // Enable Crashlytics crash collection (no-op in debug if disabled there).
     await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(
