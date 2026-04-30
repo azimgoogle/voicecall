@@ -1,6 +1,11 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../interfaces/foreground_service.dart';
+
+/// Notification title reflects the build mode so testers can instantly tell
+/// which build is running. Resolved at compile time — zero runtime cost.
+const _kNotificationTitle = kDebugMode ? '(Dev) Nest Call' : 'Nest Call';
 
 /// Initialize foreground task configuration. Call once in main().
 void initForegroundService() {
@@ -29,7 +34,7 @@ void initForegroundService() {
 Future<void> startForegroundService() async {
   await FlutterForegroundTask.startService(
     serviceId: 100,
-    notificationTitle: 'Nest Call',
+    notificationTitle: _kNotificationTitle,
     notificationText: 'Waiting for calls...',
     // 'ic_notification' matches the <meta-data android:name="ic_notification">
     // entry in the ForegroundService declaration in AndroidManifest.xml.
@@ -50,7 +55,7 @@ Future<void> updateForegroundNotification(
   bool isMuted = false,
 }) async {
   await FlutterForegroundTask.updateService(
-    notificationTitle: 'Nest Call',
+    notificationTitle: _kNotificationTitle,
     notificationText: text,
     notificationButtons: [
       if (showMute)
